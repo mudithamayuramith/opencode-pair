@@ -56,19 +56,22 @@ Ready-to-install copies are in `dist/`.
 
 ### Editing the URL
 
-- Long-press the floating **↻** button, or
-- Tap **Edit URL** on the error page.
+- Tap the **⚙** button in the top bar, or
+- Tap **Change address** on the error page.
 
 ### Other behaviour
 
-- **Fullscreen** — no address bar, no tabs.
-- **Reload** — tap the floating **↻** button.
+- **Top bar** — shows the connected host, a status dot (green = connected, amber = loading,
+  red = failed), a reload button and an address button. It replaces the old floating button,
+  which sat on top of the page's own composer.
+- **Fullscreen** — no address bar, no tabs, no browser chrome.
+- **Reload** — tap **↻** in the top bar.
 - **Back** — goes back inside the WebView first, exits only at the first page.
-  Back also cancels the URL editor.
+  Back also cancels the address editor without reloading the page.
 - **Keyboard** — the layout shrinks cleanly (edge-to-edge + IME insets on Android 11+,
   `adjustResize` on older releases).
 - **Screen stays on** while the app is in the foreground.
-- **Errors** — a failed load shows a themed page with **Retry** and **Edit URL**.
+- **Errors** — a failed load shows a themed page with **Try again** and **Change address**.
 - **Extras** — top progress bar, file uploads, downloads, and external links open in the
   system browser.
 

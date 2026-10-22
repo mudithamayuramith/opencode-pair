@@ -5,13 +5,17 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Insets;
+import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.net.http.SslError;
 import android.os.Build;
 import android.os.Bundle;
+import android.text.TextUtils;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -34,16 +38,37 @@ import java.util.Locale;
 public class MainActivity extends Activity {
     private static final String PREFS = "opencode_pair", KEY_URL = "url";
     private static final String SCHEME_APP = "app";
-    private static final String BG = "#0B0B0F";
+
+    private static final int C_BG      = 0xFF0B0B0F;
+    private static final int C_SURFACE = 0xFF17171F;
+    private static final int C_FIELD   = 0xFF13131A;
+    private static final int C_STROKE  = 0xFF2A2A36;
+    private static final int C_TEXT    = 0xFFE5E7EB;
+    private static final int C_MUTED   = 0xFF9CA3AF;
+    private static final int C_DIM     = 0xFF6B7280;
+    private static final int C_ACCENT  = 0xFF4F46E5;
+
+    private static final int S_IDLE    = 0xFF6B7280;
+    private static final int S_LOADING = 0xFFFBBF24;
+    private static final int S_OK      = 0xFF34D399;
+    private static final int S_ERROR   = 0xFFF87171;
 
     private SharedPreferences prefs;
     private FrameLayout root;
-    private WebView web;
+
+    /** Toolbar + progress + WebView. Hidden while the address editor is open. */
+    private LinearLayout main;
+    private View dot;
+    private TextView hostLabel;
     private ProgressBar progress;
-    private TextView fab;
+    private WebView web;
+
+    /** Address editor overlay, or null. */
     private View settings;
+
     private ValueCallback<Uri[]> fileCallback;
     private boolean failed = false;
+    private String loadedUrl;
 
     /** Platform predictive-back callback (API 33+). */
     private OnBackInvokedCallback backCallback;
@@ -55,7 +80,7 @@ public class MainActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         root = new FrameLayout(this);
-        root.setBackgroundColor(Color.parseColor(BG));
+        root.setBackgroundColor(C_BG);
         setContentView(root);
         applyWindowInsets();
         registerBackHandler();
@@ -107,10 +132,8 @@ public class MainActivity extends Activity {
         backConsumed = true;
         root.post(() -> backConsumed = false);
 
-        String saved = prefs.getString(KEY_URL, "");
-        if (settings != null) {                       // cancel the URL editor
-            if (web != null && !saved.isEmpty()) showWeb(saved, null);
-            else finish();
+        if (settings != null) {                    // cancel the address editor
+            if (web != null) resumeWeb(); else finish();
             return;
         }
         if (web != null && web.getVisibility() == View.VISIBLE && !failed && web.canGoBack()) {
@@ -128,54 +151,119 @@ public class MainActivity extends Activity {
     @SuppressLint("GestureBackNavigation")
     @Override public void onBackPressed() { handleBack(); }
 
-    // ---------- Settings screen ----------
+    // ---------- Address editor ----------
 
     private void showSettings() {
-        if (web != null) web.setVisibility(View.GONE);
-        if (fab != null) fab.setVisibility(View.GONE);
-        if (progress != null) progress.setVisibility(View.GONE);
+        if (main != null) main.setVisibility(View.GONE);
         if (settings != null) root.removeView(settings);
+
+        ScrollView sv = new ScrollView(this);
+        sv.setFillViewport(true);
+        sv.setBackgroundColor(C_BG);
 
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
-        col.setGravity(Gravity.CENTER_VERTICAL);
-        col.setPadding(dp(28), dp(28), dp(28), dp(28));
+        col.setPadding(dp(24), dp(48), dp(24), dp(24));
+
+        // App mark
+        FrameLayout mark = new FrameLayout(this);
+        GradientDrawable mb = new GradientDrawable();
+        mb.setColor(C_ACCENT);
+        mb.setCornerRadius(dp(16));
+        mark.setBackground(mb);
+        ImageView markIcon = new ImageView(this);
+        markIcon.setImageResource(R.drawable.ic_fg);
+        markIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        mark.addView(markIcon, new FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER));
+        col.addView(mark, new LinearLayout.LayoutParams(dp(56), dp(56)));
 
         TextView title = new TextView(this);
         title.setText(R.string.connect_title);
-        title.setTextColor(Color.WHITE); title.setTextSize(28);
-        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(26);
+        title.setTypeface(null, Typeface.BOLD);
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        tlp.topMargin = dp(20);
+        col.addView(title, tlp);
+
         TextView sub = new TextView(this);
         sub.setText(R.string.connect_subtitle);
-        sub.setTextColor(Color.parseColor("#9CA3AF")); sub.setTextSize(14);
-        sub.setPadding(0, dp(8), dp(0), dp(24));
+        sub.setTextColor(C_MUTED);
+        sub.setTextSize(13.5f);
+        sub.setLineSpacing(0f, 1.15f);
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        slp.topMargin = dp(8);
+        slp.bottomMargin = dp(28);
+        col.addView(sub, slp);
+
+        TextView label = new TextView(this);
+        label.setText(R.string.label_server_address);
+        label.setTextColor(C_DIM);
+        label.setTextSize(11);
+        label.setAllCaps(true);
+        label.setLetterSpacing(0.09f);
+        label.setTypeface(null, Typeface.BOLD);
+        LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        llp.bottomMargin = dp(8);
+        col.addView(label, llp);
 
         final EditText input = new EditText(this);
         input.setHint(R.string.connect_hint);
-        input.setHintTextColor(Color.parseColor("#6B7280"));
-        input.setTextColor(Color.WHITE);
+        input.setHintTextColor(C_DIM);
+        input.setTextColor(C_TEXT);
+        input.setTextSize(14);
+        input.setTypeface(Typeface.MONOSPACE);
         input.setSingleLine(true);
-        input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
+        input.setGravity(Gravity.CENTER_VERTICAL);
+        input.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_VARIATION_URI);
         input.setImeOptions(EditorInfo.IME_ACTION_GO);
-        input.setPadding(dp(16), dp(14), dp(16), dp(14));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.parseColor("#17171F")); bg.setCornerRadius(dp(12));
-        bg.setStroke(dp(1), Color.parseColor("#2A2A36"));
-        input.setBackground(bg);
+        input.setPadding(dp(16), 0, dp(16), 0);
+        input.setBackground(fieldBackground());
         input.setText(prefs.getString(KEY_URL, ""));
+        col.addView(input, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
 
         final TextView err = new TextView(this);
-        err.setTextColor(Color.parseColor("#F87171")); err.setTextSize(13);
-        err.setPadding(0, dp(8), dp(0), dp(0));
+        err.setTextColor(S_ERROR);
+        err.setTextSize(12.5f);
+        err.setPadding(0, dp(8), 0, 0);
+        col.addView(err);
 
         Button go = new Button(this);
-        go.setText(R.string.connect_action); go.setAllCaps(false);
-        go.setTextColor(Color.WHITE); go.setTextSize(16);
+        go.setText(R.string.connect_action);
+        go.setAllCaps(false);
+        go.setTextColor(Color.WHITE);
+        go.setTextSize(15.5f);
+        go.setTypeface(null, Typeface.BOLD);
         GradientDrawable gb = new GradientDrawable();
-        gb.setColor(Color.parseColor("#4F46E5")); gb.setCornerRadius(dp(12));
+        gb.setColor(C_ACCENT);
+        gb.setCornerRadius(dp(12));
         go.setBackground(gb);
+        go.setStateListAnimator(null);
         LinearLayout.LayoutParams glp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
-        glp.topMargin = dp(20);
+        glp.topMargin = dp(22);
+        col.addView(go, glp);
+
+        TextView hint = new TextView(this);
+        hint.setText(R.string.hint_server);
+        hint.setTextColor(C_DIM);
+        hint.setTextSize(12);
+        hint.setLineSpacing(0f, 1.3f);
+        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        hlp.topMargin = dp(16);
+        col.addView(hint, hlp);
+
+        col.addView(new View(this), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        TextView foot = new TextView(this);
+        foot.setText(R.string.footnote_saved);
+        foot.setTextColor(0xFF4B5563);
+        foot.setTextSize(11);
+        col.addView(foot);
 
         final Runnable submit = () -> {
             String u = normalize(input.getText().toString());
@@ -188,13 +276,24 @@ public class MainActivity extends Activity {
         go.setOnClickListener(v -> submit.run());
         input.setOnEditorActionListener((v, a, e) -> { submit.run(); return true; });
 
-        col.addView(title); col.addView(sub); col.addView(input);
-        col.addView(err); col.addView(go, glp);
-        ScrollView sv = new ScrollView(this);
-        sv.setFillViewport(true);
-        sv.addView(col, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        sv.addView(col, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         settings = sv;
         root.addView(sv, new FrameLayout.LayoutParams(-1, -1));
+    }
+
+    private GradientDrawable fieldBackground() {
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(C_FIELD);
+        d.setCornerRadius(dp(12));
+        d.setStroke(dp(1), C_STROKE);
+        return d;
+    }
+
+    /** Closes the address editor and returns to the existing page without reloading it. */
+    private void resumeWeb() {
+        if (settings != null) { root.removeView(settings); settings = null; }
+        if (main != null) main.setVisibility(View.VISIBLE);
     }
 
     /**
@@ -215,21 +314,76 @@ public class MainActivity extends Activity {
         return s;
     }
 
-    // ---------- WebView ----------
+    // ---------- WebView + toolbar ----------
 
     private void showWeb(String url, Bundle saved) {
         if (settings != null) { root.removeView(settings); settings = null; }
-        if (web == null) buildWeb();
-        web.setVisibility(View.VISIBLE);
-        fab.setVisibility(View.VISIBLE);
+        if (main == null) buildMain();
+        main.setVisibility(View.VISIBLE);
+        updateHost(url);
+
+        boolean wasFailed = failed;
         failed = false;
-        if (saved != null && web.restoreState(saved) != null) return;
+
+        if (saved != null && web.restoreState(saved) != null) {
+            loadedUrl = url;
+            setStatus(S_OK);
+            return;
+        }
+        boolean same = url.equals(loadedUrl);
+        if (same && !wasFailed && web.getUrl() != null) return;   // already showing this page
+        loadedUrl = url;
+        setStatus(S_LOADING);
         web.loadUrl(url);
     }
 
-    private void buildWeb() {
+    private void buildMain() {
+        main = new LinearLayout(this);
+        main.setOrientation(LinearLayout.VERTICAL);
+
+        LinearLayout topBar = new LinearLayout(this);
+        topBar.setOrientation(LinearLayout.HORIZONTAL);
+        topBar.setGravity(Gravity.CENTER_VERTICAL);
+        topBar.setBackgroundResource(R.drawable.bg_topbar);
+        topBar.setPadding(dp(16), 0, dp(6), 0);
+
+        dot = new View(this);
+        GradientDrawable dotBg = new GradientDrawable();
+        dotBg.setShape(GradientDrawable.OVAL);
+        dotBg.setColor(S_IDLE);
+        dot.setBackground(dotBg);
+        topBar.addView(dot, new LinearLayout.LayoutParams(dp(8), dp(8)));
+
+        hostLabel = new TextView(this);
+        hostLabel.setTextColor(C_MUTED);
+        hostLabel.setTextSize(12.5f);
+        hostLabel.setTypeface(Typeface.MONOSPACE);
+        hostLabel.setSingleLine(true);
+        hostLabel.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        hlp.setMarginStart(dp(10));
+        topBar.addView(hostLabel, hlp);
+
+        ImageButton reloadBtn = iconButton(R.drawable.ic_refresh, R.string.cd_reload);
+        reloadBtn.setOnClickListener(v -> reload());
+        reloadBtn.setOnLongClickListener(v -> { showSettings(); return true; });
+        topBar.addView(reloadBtn, new LinearLayout.LayoutParams(dp(40), dp(40)));
+
+        ImageButton settingsBtn = iconButton(R.drawable.ic_settings, R.string.cd_settings);
+        settingsBtn.setOnClickListener(v -> showSettings());
+        topBar.addView(settingsBtn, new LinearLayout.LayoutParams(dp(40), dp(40)));
+
+        main.addView(topBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+
+        progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progress.setMax(100);
+        progress.setVisibility(View.INVISIBLE);          // reserve the 2dp so nothing jumps
+        progress.setProgressTintList(ColorStateList.valueOf(C_ACCENT));
+        progress.setProgressBackgroundTintList(ColorStateList.valueOf(C_SURFACE));
+        main.addView(progress, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)));
+
         web = new WebView(this);
-        web.setBackgroundColor(Color.parseColor(BG));
+        web.setBackgroundColor(C_BG);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
@@ -267,13 +421,18 @@ public class MainActivity extends Activity {
                 // tel:, mailto:, geo:, intent:, ... -> let another app handle it
                 return openExternally(u);
             }
+            @Override public void onPageStarted(WebView v, String url, android.graphics.Bitmap favicon) {
+                setStatus(S_LOADING);
+            }
             @Override public void onPageFinished(WebView v, String url) {
                 cm.flush();
-                progress.setVisibility(View.GONE);
+                progress.setVisibility(View.INVISIBLE);
+                if (!failed) setStatus(S_OK);
             }
             @Override public void onReceivedError(WebView v, WebResourceRequest r, WebResourceError e) {
                 if (r.isForMainFrame()) {
                     failed = true;
+                    setStatus(S_ERROR);
                     v.loadDataWithBaseURL(null, errorHtml(String.valueOf(e.getDescription())),
                             "text/html", "utf-8", null);
                 }
@@ -281,13 +440,14 @@ public class MainActivity extends Activity {
             @Override public void onReceivedSslError(WebView v, SslErrorHandler h, SslError e) {
                 h.cancel();
                 failed = true;
+                setStatus(S_ERROR);
                 v.loadDataWithBaseURL(null, errorHtml(sslErrorMessage(e.getPrimaryError())),
                         "text/html", "utf-8", null);
             }
         });
         web.setWebChromeClient(new WebChromeClient() {
             @Override public void onProgressChanged(WebView v, int p) {
-                progress.setVisibility(p < 100 ? View.VISIBLE : View.GONE);
+                progress.setVisibility(p < 100 ? View.VISIBLE : View.INVISIBLE);
                 progress.setProgress(p);
             }
             @Override public void onPermissionRequest(PermissionRequest r) { r.grant(r.getResources()); }
@@ -300,28 +460,35 @@ public class MainActivity extends Activity {
         });
         web.setDownloadListener((u, ua, cd, mime, len) -> openExternally(Uri.parse(u)));
 
-        progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        progress.setMax(100);
-        progress.setVisibility(View.GONE);
+        main.addView(web, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        root.addView(main, new FrameLayout.LayoutParams(-1, -1));
+    }
 
-        fab = new TextView(this);
-        fab.setText("\u21BB");
-        fab.setGravity(Gravity.CENTER);
-        fab.setTextColor(Color.WHITE); fab.setTextSize(20);
-        GradientDrawable fb = new GradientDrawable();
-        fb.setShape(GradientDrawable.OVAL); fb.setColor(Color.parseColor("#B34F46E5"));
-        fab.setBackground(fb);
-        fab.setOnClickListener(v -> reload());
-        fab.setOnLongClickListener(v -> { showSettings(); return true; });
+    private ImageButton iconButton(int drawableRes, int contentDescRes) {
+        ImageButton b = new ImageButton(this);
+        b.setImageResource(drawableRes);
+        b.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        b.setPadding(dp(9), dp(9), dp(9), dp(9));
+        b.setContentDescription(getString(contentDescRes));
+        TypedValue tv = new TypedValue();
+        if (getTheme().resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, tv, true)) {
+            b.setBackgroundResource(tv.resourceId);
+        } else {
+            b.setBackgroundColor(Color.TRANSPARENT);
+        }
+        return b;
+    }
 
-        root.addView(web, new FrameLayout.LayoutParams(-1, -1));
-        FrameLayout.LayoutParams pl = new FrameLayout.LayoutParams(-1, dp(3));
-        pl.gravity = Gravity.TOP;
-        root.addView(progress, pl);
-        FrameLayout.LayoutParams fl = new FrameLayout.LayoutParams(dp(44), dp(44));
-        fl.gravity = Gravity.BOTTOM | Gravity.END;
-        fl.setMargins(0, 0, dp(12), dp(84));
-        root.addView(fab, fl);
+    private void updateHost(String url) {
+        if (hostLabel == null) return;
+        String authority = Uri.parse(url).getAuthority();
+        hostLabel.setText(authority == null || authority.isEmpty() ? url : authority);
+    }
+
+    private void setStatus(int color) {
+        if (dot == null) return;
+        android.graphics.drawable.Drawable d = dot.getBackground();
+        if (d instanceof GradientDrawable) ((GradientDrawable) d).setColor(color);
     }
 
     /** Hands a non-web URL to another app. Returns false when nothing can handle it. */
@@ -344,33 +511,51 @@ public class MainActivity extends Activity {
     private void reload() {
         String base = prefs.getString(KEY_URL, "");
         if (base.isEmpty()) { showSettings(); return; }
+        setStatus(S_LOADING);
         if (failed || web.getUrl() == null || web.getUrl().startsWith("data:") || "about:blank".equals(web.getUrl())) {
-            failed = false; web.loadUrl(base);
+            failed = false; loadedUrl = base; web.loadUrl(base);
         } else web.reload();
     }
 
     private String errorHtml(String msg) {
         String url = prefs.getString(KEY_URL, "");
-        return "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'></head>"
-            + "<body style='background:#0B0B0F;color:#E5E7EB;font-family:sans-serif;text-align:center;padding:48px 24px'>"
-            + "<h2>Can't reach OpenCode Pair</h2><p style='color:#9CA3AF'>" + escape(url) + "<br>" + escape(msg) + "</p>"
-            + "<p style='color:#9CA3AF;font-size:14px'>Check that the PC server is running and both devices are on the same network (or tunnel is up).</p>"
-            + "<a href='app://retry' style='display:block;margin:24px auto 12px;max-width:260px;padding:14px;border-radius:12px;background:#4F46E5;color:#fff;text-decoration:none'>Retry</a>"
-            + "<a href='app://edit' style='display:block;margin:0 auto;max-width:260px;padding:14px;border-radius:12px;background:#17171F;color:#fff;text-decoration:none'>Edit URL</a>"
+        return "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
+            + "<style>body{margin:0;padding:56px 24px;background:#0B0B0F;color:#E5E7EB;"
+            + "font-family:-apple-system,Roboto,system-ui,sans-serif;text-align:center;"
+            + "-webkit-text-size-adjust:100%}"
+            + "h2{margin:0 0 10px;font-size:20px;font-weight:650;letter-spacing:-.01em}"
+            + "p{margin:0;font-size:14px;line-height:1.5;color:#9CA3AF}"
+            + ".addr{margin:18px auto 0;display:inline-block;font-family:ui-monospace,monospace;"
+            + "font-size:12.5px;color:#C7C7D1;background:#13131A;border:1px solid #2A2A36;"
+            + "border-radius:8px;padding:7px 12px;word-break:break-all}"
+            + ".why{margin-top:16px;font-size:12.5px;color:#6B7280}"
+            + ".act{display:block;max-width:280px;margin:26px auto 0;padding:15px;border-radius:12px;"
+            + "font-size:15px;font-weight:600;text-decoration:none}"
+            + ".primary{background:#4F46E5;color:#fff}"
+            + ".secondary{margin-top:10px;background:#17171F;border:1px solid #2A2A36;color:#E5E7EB;"
+            + "font-weight:500}"
+            + "</style></head><body>"
+            + "<h2>Can't reach OpenCode Pair</h2>"
+            + "<p>The server did not respond.</p>"
+            + "<div class='addr'>" + escape(url) + "</div>"
+            + "<p class='why'>" + escape(msg) + "</p>"
+            + "<p class='why'>Check that OpenCode Pair is running on your PC and that both devices are on the same network.</p>"
+            + "<a class='act primary' href='app://retry'>Try again</a>"
+            + "<a class='act secondary' href='app://edit'>Change address</a>"
             + "</body></html>";
     }
 
-    private static String escape(String s) { return android.text.TextUtils.htmlEncode(s == null ? "" : s); }
+    private static String escape(String s) { return TextUtils.htmlEncode(s == null ? "" : s); }
 
     private static String sslErrorMessage(int primaryError) {
         switch (primaryError) {
-            case SslError.SSL_NOTYETVALID:   return "the server certificate is not valid yet";
-            case SslError.SSL_EXPIRED:       return "the server certificate has expired";
-            case SslError.SSL_IDMISMATCH:    return "the server certificate does not match the address";
-            case SslError.SSL_UNTRUSTED:     return "the server certificate is not trusted";
-            case SslError.SSL_DATE_INVALID:  return "the server certificate date is invalid";
-            case SslError.SSL_INVALID:       return "the server certificate is invalid";
-            default:                         return "the server certificate could not be verified";
+            case SslError.SSL_NOTYETVALID:   return "The server certificate is not valid yet.";
+            case SslError.SSL_EXPIRED:       return "The server certificate has expired.";
+            case SslError.SSL_IDMISMATCH:    return "The server certificate does not match the address.";
+            case SslError.SSL_UNTRUSTED:     return "The server certificate is not trusted.";
+            case SslError.SSL_DATE_INVALID:  return "The server certificate date is invalid.";
+            case SslError.SSL_INVALID:       return "The server certificate is invalid.";
+            default:                         return "The server certificate could not be verified.";
         }
     }
 
@@ -390,7 +575,11 @@ public class MainActivity extends Activity {
             getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
             backCallback = null;
         }
-        if (web != null) { root.removeView(web); web.destroy(); }
+        if (web != null) {
+            if (main != null) main.removeView(web);
+            web.destroy();
+            web = null;
+        }
         super.onDestroy();
     }
 }

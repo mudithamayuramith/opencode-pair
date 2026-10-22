@@ -2,8 +2,13 @@
 <resources>
     <string name="app_name">OpenCode Pair</string>
     <string name="connect_title">OpenCode Pair</string>
-    <string name="connect_subtitle">Enter the server URL or IP:port shown by OpenCode Pair on your PC.</string>
+    <string name="connect_subtitle">Connect this phone to the OpenCode session on your computer.</string>
     <string name="connect_hint">http://192.168.1.10:4096</string>
     <string name="connect_invalid">Please enter a valid http:// or https:// address.</string>
     <string name="connect_action">Connect</string>
+    <string name="label_server_address">Server address</string>
+    <string name="hint_server">Start OpenCode Pair on your PC and use the address it shows. Both devices must be on the same Wi-Fi.</string>
+    <string name="footnote_saved">The address is saved and reopened automatically next time.</string>
+    <string name="cd_reload">Reload page</string>
+    <string name="cd_settings">Change server address</string>
 </resources>
