@@ -28,16 +28,21 @@ import android.widget.*;
 import android.window.OnBackInvokedCallback;
 import android.window.OnBackInvokedDispatcher;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 /**
  * OpenCode Pair — a fullscreen WebView client for the OpenCode Pair server.
  *
- * Dependency-free (no AndroidX, no Kotlin) so the build stays trivial.
+ * No AndroidX, no Kotlin. The single library is the pure-Java ZXing decoder used for QR
+ * pairing; everything else is platform API.
  */
 public class MainActivity extends Activity {
     private static final String PREFS = "opencode_pair", KEY_URL = "url";
     private static final String SCHEME_APP = "app";
+
+    private static final int REQ_FILE = 1, REQ_SCAN = 2;
 
     private static final int C_BG      = 0xFF0B0B0F;
     private static final int C_SURFACE = 0xFF17171F;
@@ -69,6 +74,13 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> fileCallback;
     private boolean failed = false;
     private String loadedUrl;
+
+    /**
+     * Connect links from a scanned pairing code, in the order the server listed them.
+     * Empty when the address was typed by hand, which disables the fallback.
+     */
+    private final List<String> candidates = new ArrayList<>();
+    private int candidateIndex = -1;
 
     /** Platform predictive-back callback (API 33+). */
     private OnBackInvokedCallback backCallback;
@@ -247,6 +259,22 @@ public class MainActivity extends Activity {
         glp.topMargin = dp(22);
         col.addView(go, glp);
 
+        Button scanBtn = new Button(this);
+        scanBtn.setText(R.string.connect_scan);
+        scanBtn.setAllCaps(false);
+        scanBtn.setTextColor(C_TEXT);
+        scanBtn.setTextSize(15f);
+        scanBtn.setTypeface(null, Typeface.BOLD);
+        scanBtn.setBackground(outlineBackground());
+        scanBtn.setStateListAnimator(null);
+        scanBtn.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_qr, 0, 0, 0);
+        scanBtn.setCompoundDrawablePadding(dp(10));
+        scanBtn.setOnClickListener(v -> startScan());
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
+        blp.topMargin = dp(10);
+        col.addView(scanBtn, blp);
+
         TextView hint = new TextView(this);
         hint.setText(R.string.hint_server);
         hint.setTextColor(C_DIM);
@@ -266,11 +294,24 @@ public class MainActivity extends Activity {
         col.addView(foot);
 
         final Runnable submit = () -> {
-            String u = normalize(input.getText().toString());
+            String text = input.getText().toString().trim();
+
+            // The QR payload is JSON, but it can also be pasted as text.
+            if (text.startsWith("{")) {
+                List<String> urls = PairPayload.parse(text);
+                if (urls.isEmpty()) { err.setText(R.string.connect_invalid); return; }
+                hideKeyboard(input);
+                startPairing(urls);
+                return;
+            }
+
+            String u = normalize(text);
             if (u == null) { err.setText(R.string.connect_invalid); return; }
+            if (PairPayload.isLoopback(u)) { err.setText(R.string.connect_loopback); return; }
+            candidates.clear();
+            candidateIndex = -1;
             prefs.edit().putString(KEY_URL, u).apply();
-            InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-            imm.hideSoftInputFromWindow(input.getWindowToken(), 0);
+            hideKeyboard(input);
             showWeb(u, null);
         };
         go.setOnClickListener(v -> submit.run());
@@ -288,6 +329,19 @@ public class MainActivity extends Activity {
         d.setCornerRadius(dp(12));
         d.setStroke(dp(1), C_STROKE);
         return d;
+    }
+
+    private GradientDrawable outlineBackground() {
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(C_SURFACE);
+        d.setCornerRadius(dp(12));
+        d.setStroke(dp(1), C_STROKE);
+        return d;
+    }
+
+    private void hideKeyboard(View v) {
+        InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+        imm.hideSoftInputFromWindow(v.getWindowToken(), 0);
     }
 
     /** Closes the address editor and returns to the existing page without reloading it. */
@@ -312,6 +366,67 @@ public class MainActivity extends Activity {
         String host = u.getHost();
         if (host == null || host.isEmpty()) return null;
         return s;
+    }
+
+    // ---------- Pairing: QR codes and the three printed links ----------
+
+    private void startScan() {
+        try {
+            startActivityForResult(new Intent(this, ScanActivity.class), REQ_SCAN);
+        } catch (Exception e) {
+            Toast.makeText(this, R.string.scan_no_camera, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void handlePairingPayload(String raw) {
+        List<String> urls = PairPayload.parse(raw);
+        if (urls.isEmpty()) {
+            Toast.makeText(this, R.string.scan_not_pairing, Toast.LENGTH_LONG).show();
+            return;
+        }
+        startPairing(urls);
+    }
+
+    /**
+     * Connects to the first candidate and remembers the rest. Every candidate carries the same
+     * single-use code, so if the LAN address is unreachable the tunnel address is tried next.
+     */
+    private void startPairing(List<String> urls) {
+        if (urls.isEmpty()) return;
+        candidates.clear();
+        candidates.addAll(urls);
+        candidateIndex = 0;
+        String first = candidates.get(0);
+        prefs.edit().putString(KEY_URL, first).apply();
+        showWeb(first, null);
+    }
+
+    /** Moves to the next pairing candidate. False when there is nothing left to try. */
+    private boolean tryNextCandidate(WebView v) {
+        if (candidateIndex < 0 || candidateIndex + 1 >= candidates.size()) return false;
+        candidateIndex++;
+        String next = candidates.get(candidateIndex);
+        prefs.edit().putString(KEY_URL, next).apply();
+        loadedUrl = next;
+        updateHost(next);
+        failed = false;
+        setStatus(S_LOADING);
+        if (progress != null) progress.setVisibility(View.VISIBLE);
+        v.loadUrl(next);
+        return true;
+    }
+
+    /**
+     * A pairing link is single-use, so once it has been redeemed the page it led to is what
+     * should be reopened next time. The session cookie makes that page work again.
+     */
+    private void rememberWorkingUrl(String url) {
+        if (url == null || !url.startsWith("http")) return;
+        String saved = prefs.getString(KEY_URL, "");
+        if (!PairPayload.isPairingLink(saved) || PairPayload.isPairingLink(url)) return;
+        if (!PairPayload.hostOf(saved).equals(PairPayload.hostOf(url))) return;   // same server only
+        prefs.edit().putString(KEY_URL, url).apply();
+        loadedUrl = url;
     }
 
     // ---------- WebView + toolbar ----------
@@ -427,10 +542,17 @@ public class MainActivity extends Activity {
             @Override public void onPageFinished(WebView v, String url) {
                 cm.flush();
                 progress.setVisibility(View.INVISIBLE);
-                if (!failed) setStatus(S_OK);
+                if (!failed) {
+                    setStatus(S_OK);
+                    // Reached the server: the pairing attempt is done, keep this address only.
+                    candidates.clear();
+                    candidateIndex = -1;
+                    rememberWorkingUrl(url);
+                }
             }
             @Override public void onReceivedError(WebView v, WebResourceRequest r, WebResourceError e) {
                 if (r.isForMainFrame()) {
+                    if (tryNextCandidate(v)) return;
                     failed = true;
                     setStatus(S_ERROR);
                     v.loadDataWithBaseURL(null, errorHtml(String.valueOf(e.getDescription())),
@@ -439,6 +561,7 @@ public class MainActivity extends Activity {
             }
             @Override public void onReceivedSslError(WebView v, SslErrorHandler h, SslError e) {
                 h.cancel();
+                if (tryNextCandidate(v)) return;
                 failed = true;
                 setStatus(S_ERROR);
                 v.loadDataWithBaseURL(null, errorHtml(sslErrorMessage(e.getPrimaryError())),
@@ -454,7 +577,7 @@ public class MainActivity extends Activity {
             @Override public boolean onShowFileChooser(WebView w, ValueCallback<Uri[]> cb, FileChooserParams p) {
                 if (fileCallback != null) fileCallback.onReceiveValue(null);
                 fileCallback = cb;
-                try { startActivityForResult(p.createIntent(), 1); } catch (Exception e) { fileCallback = null; return false; }
+                try { startActivityForResult(p.createIntent(), REQ_FILE); } catch (Exception e) { fileCallback = null; return false; }
                 return true;
             }
         });
@@ -560,7 +683,13 @@ public class MainActivity extends Activity {
     }
 
     @Override protected void onActivityResult(int req, int res, Intent data) {
-        if (req == 1 && fileCallback != null) {
+        if (req == REQ_SCAN) {
+            if (res == RESULT_OK && data != null) {
+                handlePairingPayload(data.getStringExtra(ScanActivity.EXTRA_TEXT));
+            }
+            return;
+        }
+        if (req == REQ_FILE && fileCallback != null) {
             fileCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(res, data));
             fileCallback = null;
         } else super.onActivityResult(req, res, data);

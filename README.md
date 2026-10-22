@@ -1,8 +1,8 @@
 # OpenCode Pair — Android app
 
-A minimal, fullscreen WebView client that pairs an Android phone with the **OpenCode Pair**
-server running on your PC. Plain Java, no AndroidX, no Kotlin, no third-party dependencies —
-so the build stays tiny and the APK is ~20 KB.
+A minimal, fullscreen WebView client that pairs an Android phone with the **OpenCode** server
+running on your PC. Plain Java, no AndroidX, no Kotlin. The only library is Google's pure-Java
+ZXing decoder, used to read the pairing QR code — the APK is still only ~250 KB.
 
 ## Build
 
@@ -46,13 +46,43 @@ Ready-to-install copies are in `dist/`.
 
 `local.properties` points at your SDK (`sdk.dir=...`) and is not committed.
 
-## Using the app
+## Pairing
 
-1. Start the OpenCode Pair server on your PC; it prints a URL such as `http://192.168.1.10:4096`.
-2. Install the APK on the phone (`adb install -r dist/app-debug.apk`) and open **OpenCode Pair**.
-3. On first launch, type the URL or `IP:port`. A missing `http://` is added automatically.
-   The URL is saved and reopened automatically next time.
-4. The phone and the PC must be on the same network (or you use the server's tunnel).
+On the PC, run this inside the project you want to open:
+
+```bash
+opencode pair
+```
+
+It prints three one-time links (valid for 5 minutes, each usable once) and a QR code:
+
+| Link | Reachable from |
+| --- | --- |
+| `http://127.0.0.1:45278/auth/connect/<code>` | the PC itself only |
+| `http://192.168.x.x:45278/auth/connect/<code>` | the same Wi-Fi |
+| `https://<id>.opentunnel.xyz/auth/connect/<code>` | anywhere, via OpenTunnel |
+
+The QR code is **not** a URL. It contains JSON:
+
+```json
+{"code":"<code>","urls":["http://192.168.x.x:45278","https://<id>.opentunnel.xyz"]}
+```
+
+`urls` are the server's base addresses with loopback filtered out; the real connect link for
+each is `<base>/auth/connect/<code>`.
+
+### In the app
+
+1. Install `dist/app-debug.apk` (`adb install -r dist/app-debug.apk`) and open **OpenCode Pair**.
+2. Tap **Scan QR code** and point the camera at the terminal, **or** paste any of the three links
+   (or the QR JSON itself) into the address field and tap **Connect**.
+3. When a scan yields several addresses, the app tries them in order — LAN first — and falls back
+   to the next one automatically if a host cannot be reached. Every address carries the same
+   one-time code, so whichever answers first wins.
+4. After the code is redeemed, the app keeps the page it landed on instead of the used pairing
+   link, so the next launch reopens the paired session (the session cookie is kept).
+5. `127.0.0.1` is rejected with a hint, because on the phone it points at the phone itself.
+   Use the `192.168.x.x` or `https://…opentunnel.xyz` link, or the QR code.
 
 ### Editing the URL
 
@@ -64,6 +94,10 @@ Ready-to-install copies are in `dist/`.
 - **Top bar** — shows the connected host, a status dot (green = connected, amber = loading,
   red = failed), a reload button and an address button. It replaces the old floating button,
   which sat on top of the page's own composer.
+- **QR scanner** — full-screen camera preview with a viewfinder. Normal and inverted codes are
+  both decoded, so light-themed terminals work too. Camera permission is requested on first use.
+- **Automatic fallback** — a scanned pairing code contains more than one address; if the first
+  cannot be reached the next is tried before the error page is shown.
 - **Fullscreen** — no address bar, no tabs, no browser chrome.
 - **Reload** — tap **↻** in the top bar.
 - **Back** — goes back inside the WebView first, exits only at the first page.
@@ -86,3 +120,9 @@ Ready-to-install copies are in `dist/`.
   `content:` and `intent:` are rejected.
 - Cleartext HTTP and user-installed CA certificates are trusted on purpose — the pairing
   server usually runs on a LAN address with a self-signed certificate.
+- QR scanning uses the framework `android.hardware.Camera` (deprecated, but it needs no
+  AndroidX) together with `com.google.zxing:core`. Frames are decoded on a background thread
+  using one recycled preview buffer.
+- `PairPayload` parses the QR JSON, the three printed links and pasted text, and orders
+  loopback addresses last. `app/src/test/.../PairPayloadTest.java` covers all of those shapes
+  (`.\gradlew.bat test`).

@@ -5,10 +5,20 @@
     <string name="connect_subtitle">Connect this phone to the OpenCode session on your computer.</string>
     <string name="connect_hint">http://192.168.1.10:4096</string>
     <string name="connect_invalid">Please enter a valid http:// or https:// address.</string>
+    <string name="connect_loopback">127.0.0.1 only works on the computer itself. Use the 192.168.x.x link instead, or scan the QR code.</string>
     <string name="connect_action">Connect</string>
-    <string name="label_server_address">Server address</string>
-    <string name="hint_server">Start OpenCode Pair on your PC and use the address it shows. Both devices must be on the same Wi-Fi.</string>
+    <string name="connect_scan">Scan QR code</string>
+    <string name="label_server_address">Server address or pairing link</string>
+    <string name="hint_server">Run “opencode pair” on your PC, then scan its QR code or paste one of the three links it prints (192.168.x.x or the https address — not 127.0.0.1). Links work once and expire in 5 minutes.</string>
     <string name="footnote_saved">The address is saved and reopened automatically next time.</string>
     <string name="cd_reload">Reload page</string>
     <string name="cd_settings">Change server address</string>
+
+    <string name="scan_hint">Point the camera at the QR code in your terminal</string>
+    <string name="scan_close">Close scanner</string>
+    <string name="scan_permission">Camera access is needed to scan the QR code. Enable it in Android Settings, then come back here.</string>
+    <string name="scan_open_settings">Open app settings</string>
+    <string name="scan_no_camera">This device has no camera. Paste the pairing link instead.</string>
+    <string name="scan_camera_busy">The camera is unavailable right now. Close other camera apps and try again.</string>
+    <string name="scan_not_pairing">That QR code is not an OpenCode pairing code.</string>
 </resources>
