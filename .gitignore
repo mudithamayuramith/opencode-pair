@@ -1,0 +1,11 @@
+# Local machine settings (not portable, not committed).
+local.properties
+.gradle/
+build/
+app/build/
+*.iml
+.idea/
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/

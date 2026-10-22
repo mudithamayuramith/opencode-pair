@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OpenCode Pair</string>
+    <string name="connect_title">OpenCode Pair</string>
+    <string name="connect_subtitle">Enter the server URL or IP:port shown by OpenCode Pair on your PC.</string>
+    <string name="connect_hint">http://192.168.1.10:4096</string>
+    <string name="connect_invalid">Please enter a valid http:// or https:// address.</string>
+    <string name="connect_action">Connect</string>
+</resources>
