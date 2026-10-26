@@ -18,7 +18,16 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
+      - name: Set up Android SDK
+        run: |
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "Using Android SDK at $SDK"
+          echo "sdk.dir=$SDK" > local.properties
+          SDKMGR="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SDKMGR" ] || SDKMGR="$(ls -d "$SDK"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | tail -n 1)"
+          [ -x "$SDKMGR" ] && yes | "$SDKMGR" --licenses > /dev/null 2>&1 || true
+          [ -x "$SDKMGR" ] && "$SDKMGR" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" || true
+          "$SDKMGR" --version || true
 
       - name: Test and build
         run: chmod +x gradlew && ./gradlew test assembleDebug assembleRelease --console=plain
