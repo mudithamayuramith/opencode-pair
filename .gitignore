@@ -1,8 +1,15 @@
-# Local machine settings (not portable, not committed).
-local.properties
-.gradle/
+# Build outputs
 build/
 app/build/
+.gradle/
+dist/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Local machine settings (not portable, not committed)
+local.properties
 *.iml
 .idea/
 .DS_Store

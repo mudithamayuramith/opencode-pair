@@ -31,6 +31,22 @@
         </activity>
 
         <activity
+            android:name=".ChatActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".AddConnectionActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".WebActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|density"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
             android:name=".ScanActivity"
             android:exported="false" />
     </application>

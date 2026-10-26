@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: OpenCode itself
+    url: https://github.com/sst/opencode
+    about: Bugs in the OpenCode server or CLI belong in the upstream repository.
+  - name: Questions and ideas
+    url: https://github.com/mudithamayuramith/opencode-pair/discussions
+    about: Ask a question or share a setup.

@@ -17,7 +17,27 @@ public class PairPayloadTest {
     private static final String TUNNEL = "https://38721ba75f5db94b.ba4h4ug6wkhd.opentunnel.xyz";
     private static final String LOOPBACK = "http://127.0.0.1:45278";
 
-    /** Exactly what the QR code contains: base URLs, no /auth/connect path. */
+    /**
+     * The current QR code is the first printed link, and opencode pair prints loopback first.
+     * This is the shape that used to make scanning fail on a phone.
+     */
+    @Test public void readsTheLoopbackLinkFromTheQrCode() {
+        String loopback = LOOPBACK + "/auth/connect/" + CODE;
+
+        assertEquals(Collections.singletonList(loopback), PairPayload.parse(loopback));
+        assertTrue(PairPayload.isLoopback(PairPayload.parse(loopback).get(0)));
+    }
+
+    @Test public void rewritesTheScannedCodeToAReachableAddress() {
+        String scanned = LOOPBACK + "/auth/connect/" + CODE;
+
+        assertEquals(LAN + "/auth/connect/" + CODE, PairPayload.withBase(scanned, LAN));
+        assertEquals(TUNNEL + "/auth/connect/" + CODE, PairPayload.withBase(scanned, TUNNEL + "/"));
+        assertEquals(null, PairPayload.withBase(LAN + "/", LAN));
+        assertEquals(null, PairPayload.withBase(scanned, "not a url"));
+    }
+
+    /** Older desktop/web pairing payloads may still carry base URLs, no /auth/connect path. */
     @Test public void readsQrJsonWithBaseUrls() {
         String qr = "{\"code\":\"" + CODE + "\",\"urls\":[\"" + LAN + "\",\"" + TUNNEL + "\"]}";
 
@@ -80,6 +100,7 @@ public class PairPayloadTest {
         assertTrue(PairPayload.isLoopback(LOOPBACK + "/auth/connect/" + CODE));
         assertTrue(PairPayload.isLoopback("http://localhost:45278"));
         assertTrue(PairPayload.isLoopback("http://127.5.5.5/"));
+        assertTrue(PairPayload.isLoopback("http://[::1]:45278/auth/connect/" + CODE));
         assertFalse(PairPayload.isLoopback(LAN));
         assertFalse(PairPayload.isLoopback(TUNNEL));
         assertFalse(PairPayload.isLoopback("http://10.0.0.2:45278"));

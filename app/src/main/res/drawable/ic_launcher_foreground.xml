@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  OpenCode logo (opencode-logo-light.svg) scaled into the adaptive-icon viewport.
+  Source viewBox: 240 x 300. Scale 0.36 => 86.4 x 108, centred horizontally.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="0.36"
+        android:scaleY="0.36"
+        android:translateX="10.8"
+        android:translateY="0">
+        <path
+            android:fillColor="#CFCECD"
+            android:pathData="M180,240H60V120H180V240Z" />
+        <path
+            android:fillColor="#211E1E"
+            android:pathData="M180,60H60V240H180V60ZM240,300H0V0H240V300Z" />
+    </group>
+</vector>

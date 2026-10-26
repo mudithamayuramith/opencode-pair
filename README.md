@@ -1,17 +1,103 @@
-# OpenCode Pair — Android app
+<p align="center">
+  <img src="docs/branding/opencode-logo-light.svg" alt="OpenCode Pair" width="104">
+</p>
 
-A minimal, fullscreen WebView client that pairs an Android phone with the **OpenCode** server
-running on your PC. Plain Java, no AndroidX, no Kotlin. The only library is Google's pure-Java
-ZXing decoder, used to read the pairing QR code — the APK is still only ~250 KB.
+<h1 align="center">OpenCode Pair</h1>
+
+<p align="center">
+  A tiny native Android client for <a href="https://opencode.ai">OpenCode</a>.<br>
+  Scan the QR from <code>opencode pair</code>, browse sessions, and chat with the agent on your PC.
+</p>
+
+<p align="center">
+  <a href="https://github.com/mudithamayuramith/opencode-pair/actions/workflows/build.yml">
+    <img src="https://github.com/mudithamayuramith/opencode-pair/actions/workflows/build.yml/badge.svg" alt="Build">
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/license-MIT-211E1E.svg" alt="MIT">
+  </a>
+  <img src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white" alt="Android 8.0+">
+  <img src="https://img.shields.io/badge/APK-~0.4%20MB-211E1E.svg" alt="APK ~0.4 MB">
+</p>
+
+OpenCode Pair is a small, dependency-light Android shell for the OpenCode server running on your
+computer. It keeps the official web UI as a fallback, but gives you a native session list, a
+native chat view and QR pairing without opening a browser.
+
+- **Native chat** — Markdown, fenced code, reasoning, tool calls, retries and permissions.
+- **Sessions** — browse, create, switch models and delete sessions.
+- **Pairing that works** — scans the `opencode pair` QR code and handles the loopback-address
+  problem for you.
+- **Multiple computers** — save LAN and OpenTunnel connections and switch between them.
+- **Tiny** — plain Java, no Kotlin, no AndroidX, no Play Services, no telemetry. The only
+  dependency is the pure-Java ZXing QR decoder.
+
+## Install
+
+Download the latest APK from **[Releases](https://github.com/mudithamayuramith/opencode-pair/releases/latest)**:
+
+| File | Use it for |
+| --- | --- |
+| `app-release.apk` | Normal sideloading (recommended) |
+| `app-debug.apk` | Debugging and bug reports |
+
+Android 8.0 (API 26) or newer. The release APK is signed with the debug key so it can be
+sideloaded without a keystore; replace `signingConfigs.debug` before publishing your own build.
+
+## Pair
+
+Run this in the project you want to open:
+
+```bash
+opencode pair
+```
+
+It prints three one-time links (valid for 5 minutes) and a QR code of the **first** link:
+
+| Link | Reachable from |
+| --- | --- |
+| `http://127.0.0.1:<port>/auth/connect/<code>` | the PC itself only |
+| `http://192.168.x.x:<port>/auth/connect/<code>` | the same Wi-Fi |
+| `https://<id>.opentunnel.xyz/auth/connect/<code>` | anywhere, via OpenTunnel |
+
+The first link is loopback, so a phone cannot open it. The app detects this and asks once for the
+LAN/tunnel link (or just the computer address), then redeems the same one-time code there. If you
+already saved a connection to that computer, it reuses that address automatically.
+
+To make the QR directly scannable, tell the CLI which address to advertise:
+
+```bash
+opencode pair --url http://192.168.x.x:<port>
+```
+
+### In the app
+
+1. Open **OpenCode Pair** and tap **Scan QR code**.
+2. Point the camera at the terminal. If the QR contains `127.0.0.1`, paste the LAN/tunnel link
+   printed underneath it (or type the computer's address) when asked.
+3. The token is stored with the connection. Add as many computers as you like from
+   **Connections**.
+
+## What works
+
+| Area | Details |
+| --- | --- |
+| Sessions | Newest first, pull to refresh, project picker, create/delete, current model on each card |
+| Chat | Polling, merged messages, Markdown/code/tool/reasoning cards, retries, stop/interrupt |
+| Models | Change the session model from the chat header; user choice is pinned |
+| Permissions | Allow once / Always / Reject cards |
+| Connections | LAN and tunnel addresses, rename/delete, active connection |
+| Settings | System/light/dark theme, open the web UI, disconnect |
+| Web fallback | Full official UI in a WebView with the session cookie already set |
 
 ## Build
 
 ### Windows (PowerShell)
 
 ```powershell
-$env:JAVA_HOME="C:\Users\Muditha\AppData\Local\jdk21"     # JDK 17+
-$env:ANDROID_HOME="C:\Users\Muditha\AppData\Local\Android\Sdk"
-.\gradlew.bat assembleDebug assembleRelease
+$env:JAVA_HOME="C:\Users\<you>\AppData\Local\jdk21"   # JDK 17+
+$env:ANDROID_HOME="C:\Users\<you>\AppData\Local\Android\Sdk"
+.\gradlew.bat test assembleDebug assembleRelease
 ```
 
 ### Linux / macOS / WSL
@@ -22,19 +108,15 @@ $env:ANDROID_HOME="C:\Users\Muditha\AppData\Local\Android\Sdk"
 
 ### GitHub Actions
 
-Push the folder to a repo — `.github/workflows/build.yml` builds both APKs and uploads them
-as an artifact. No local setup needed.
+The workflow in [`.github/workflows/build.yml`](.github/workflows/build.yml) runs the tests and
+builds both APKs on every push. No local setup is needed.
 
-### Outputs
-
-| File | Notes |
+| Output | Notes |
 | --- | --- |
-| `app/build/outputs/apk/debug/app-debug.apk` | Debug build, debug-signed |
-| `app/build/outputs/apk/release/app-release.apk` | Release build, signed with the debug key (fine for sideloading) |
+| `app/build/outputs/apk/debug/app-debug.apk` | Debug build |
+| `app/build/outputs/apk/release/app-release.apk` | Release build, debug-signed |
 
-Ready-to-install copies are in `dist/`.
-
-## Toolchain
+### Toolchain
 
 | Component | Version |
 | --- | --- |
@@ -42,87 +124,77 @@ Ready-to-install copies are in `dist/`.
 | Android Gradle Plugin | 8.13.0 |
 | compileSdk / targetSdk | 36 (Android 16) |
 | minSdk | 26 (Android 8.0) |
-| Java | 17+ source/target, JDK 21 works |
+| Java | 17+ source/target; JDK 21 works |
 
-`local.properties` points at your SDK (`sdk.dir=...`) and is not committed.
+`local.properties` points at your SDK and is not committed.
 
-## Pairing
+## Project layout
 
-On the PC, run this inside the project you want to open:
+```text
+app/src/main/java/app/opencodepair/
+  MainActivity.java          sessions / connections / settings shell
+  ChatActivity.java          native chat, polling, permissions, model picker
+  AddConnectionActivity.java QR and manual pairing
+  ScanActivity.java          Camera + ZXing QR scanner
+  WebActivity.java           official web UI fallback
+  ApiClient.java             plain HttpURLConnection API client
+  ConnectionStore.java       saved connections and tokens
+  PairPayload.java           QR/link parsing and loopback rewriting
+  Theme.java / Ui.java       platform-widget theme and helpers
+app/src/test/                JVM and Robolectric tests
+docs/branding/               source SVG for the app icon
+```
+
+## Tests
 
 ```bash
-opencode pair
+./gradlew test
 ```
 
-It prints three one-time links (valid for 5 minutes, each usable once) and a QR code:
+19 local tests cover message/part/retry parsing, change signatures, pairing-link parsing, QR
+payloads, loopback rewriting, deduplication and IPv6 loopback detection. Robolectric launch tests
+cover the main shell and the pairing screen, so startup crashes are caught without a device.
 
-| Link | Reachable from |
-| --- | --- |
-| `http://127.0.0.1:45278/auth/connect/<code>` | the PC itself only |
-| `http://192.168.x.x:45278/auth/connect/<code>` | the same Wi-Fi |
-| `https://<id>.opentunnel.xyz/auth/connect/<code>` | anywhere, via OpenTunnel |
+## Contributing
 
-The QR code is **not** a URL. It contains JSON:
+Contributions are very welcome — bug reports, device testing, docs, translations and features.
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 
-```json
-{"code":"<code>","urls":["http://192.168.x.x:45278","https://<id>.opentunnel.xyz"]}
-```
+Good first issues:
 
-`urls` are the server's base addresses with loopback filtered out; the real connect link for
-each is `<base>/auth/connect/<code>`.
+- Test on more Android versions and OEM launchers.
+- Add screenshots/GIFs of the native UI.
+- Improve tablet and landscape layouts.
+- Render images and diffs in the native chat.
+- Add more unit tests around the API client.
 
-### In the app
+If an AI assistant is helping you, point it at [AGENTS.md](AGENTS.md) (OpenCode and other agents)
+or [CLAUDE.md](CLAUDE.md) (Claude Code). Both describe the build, architecture and constraints.
 
-1. Install `dist/app-debug.apk` (`adb install -r dist/app-debug.apk`) and open **OpenCode Pair**.
-2. Tap **Scan QR code** and point the camera at the terminal, **or** paste any of the three links
-   (or the QR JSON itself) into the address field and tap **Connect**.
-3. When a scan yields several addresses, the app tries them in order — LAN first — and falls back
-   to the next one automatically if a host cannot be reached. Every address carries the same
-   one-time code, so whichever answers first wins.
-4. After the code is redeemed, the app keeps the page it landed on instead of the used pairing
-   link, so the next launch reopens the paired session (the session cookie is kept).
-5. `127.0.0.1` is rejected with a hint, because on the phone it points at the phone itself.
-   Use the `192.168.x.x` or `https://…opentunnel.xyz` link, or the QR code.
+## License
 
-### Editing the URL
+[MIT](LICENSE). OpenCode Pair is an unofficial community client and is not affiliated with the
+OpenCode project. The OpenCode name and logo belong to their respective owners.
 
-- Tap the **⚙** button in the top bar, or
-- Tap **Change address** on the error page.
+<details>
+<summary>Implementation notes</summary>
 
-### Other behaviour
-
-- **Top bar** — shows the connected host, a status dot (green = connected, amber = loading,
-  red = failed), a reload button and an address button. It replaces the old floating button,
-  which sat on top of the page's own composer.
-- **QR scanner** — full-screen camera preview with a viewfinder. Normal and inverted codes are
-  both decoded, so light-themed terminals work too. Camera permission is requested on first use.
-- **Automatic fallback** — a scanned pairing code contains more than one address; if the first
-  cannot be reached the next is tried before the error page is shown.
-- **Fullscreen** — no address bar, no tabs, no browser chrome.
-- **Reload** — tap **↻** in the top bar.
-- **Back** — goes back inside the WebView first, exits only at the first page.
-  Back also cancels the address editor without reloading the page.
-- **Keyboard** — the layout shrinks cleanly (edge-to-edge + IME insets on Android 11+,
-  `adjustResize` on older releases).
-- **Screen stays on** while the app is in the foreground.
-- **Errors** — a failed load shows a themed page with **Try again** and **Change address**.
-- **Extras** — top progress bar, file uploads, downloads, and external links open in the
-  system browser.
-
-## Notes on the implementation
-
+- Authentication uses HTTP Basic `opencode:<token>`. Pairing redeems
+  `GET /auth/connect/<code>` with `Accept: application/json` and stores the returned token.
+- All HTTP calls are plain `HttpURLConnection`; JSON is `org.json`. No networking library and no
+  AndroidX in the app.
 - `targetSdk 36` means Android 16 no longer delivers `onBackPressed()`. The app registers a
-  platform `OnBackInvokedCallback` on API 33+ and keeps the legacy `onBackPressed()` path
-  for API 26–32.
-- `targetSdk 35+` enforces edge-to-edge, so system-bar / cutout / IME insets are applied
-  manually from API 30 up.
-- The URL editor only accepts `http://` and `https://` targets; `file:`, `javascript:`,
-  `content:` and `intent:` are rejected.
-- Cleartext HTTP and user-installed CA certificates are trusted on purpose — the pairing
-  server usually runs on a LAN address with a self-signed certificate.
-- QR scanning uses the framework `android.hardware.Camera` (deprecated, but it needs no
-  AndroidX) together with `com.google.zxing:core`. Frames are decoded on a background thread
-  using one recycled preview buffer.
-- `PairPayload` parses the QR JSON, the three printed links and pasted text, and orders
-  loopback addresses last. `app/src/test/.../PairPayloadTest.java` covers all of those shapes
-  (`.\gradlew.bat test`).
+  platform `OnBackInvokedCallback` on API 33+ and keeps the legacy path for API 26–32.
+- Edge-to-edge is applied manually from API 30 up. `Ui.systemBars()` must be called **after**
+  `setContentView()`: on Android 11+ `Window.getInsetsController()` dereferences the decor view.
+- Cleartext HTTP and user-installed CA certificates are trusted on purpose — the pairing server
+  usually runs on a LAN address with a self-signed certificate.
+- QR scanning uses the framework `android.hardware.Camera` and `com.google.zxing:core`; frames are
+  decoded on a background thread with one recycled preview buffer.
+- `PairPayload` parses QR links, printed links, JSON payloads and pasted text, orders loopback
+  addresses last and recognises IPv4/IPv6 loopback. A scanned loopback code can be rewritten onto
+  a saved or manually entered address without consuming the code twice.
+- Messages are polled, not streamed over SSE: the latest 60 on open, then the latest 30 every
+  1.3–3.6 seconds. Only changed message views are re-rendered.
+
+</details>

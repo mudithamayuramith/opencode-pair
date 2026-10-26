@@ -2,713 +2,1101 @@ package app.opencodepair;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
-import android.content.Context;
+import android.app.AlertDialog;
 import android.content.Intent;
-import android.content.SharedPreferences;
-import android.content.res.ColorStateList;
-import android.graphics.Color;
 import android.graphics.Insets;
 import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
-import android.net.Uri;
-import android.net.http.SslError;
 import android.os.Build;
 import android.os.Bundle;
-import android.text.TextUtils;
-import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
-import android.view.WindowManager;
-import android.view.inputmethod.EditorInfo;
-import android.view.inputmethod.InputMethodManager;
-import android.webkit.*;
-import android.widget.*;
-import android.window.OnBackInvokedCallback;
+import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.ImageButton;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.widget.Toast;
 import android.window.OnBackInvokedDispatcher;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 
 /**
- * OpenCode Pair — a fullscreen WebView client for the OpenCode Pair server.
- *
- * No AndroidX, no Kotlin. The single library is the pure-Java ZXing decoder used for QR
- * pairing; everything else is platform API.
+ * The native shell: Sessions, Connections and Settings, with QR pairing kept as the primary way
+ * to add a computer. Chat is a separate activity.
  */
-public class MainActivity extends Activity {
-    private static final String PREFS = "opencode_pair", KEY_URL = "url";
-    private static final String SCHEME_APP = "app";
+@SuppressLint({"SetTextI18n", "GestureBackNavigation"})
+public final class MainActivity extends Activity {
+    private static final int TAB_SESSIONS = 0;
+    private static final int TAB_CONNECTIONS = 1;
+    private static final int TAB_SETTINGS = 2;
+    private static final int REQ_ADD = 40;
+    private static final int REQ_CHAT = 41;
 
-    private static final int REQ_FILE = 1, REQ_SCAN = 2;
-
-    private static final int C_BG      = 0xFF0B0B0F;
-    private static final int C_SURFACE = 0xFF17171F;
-    private static final int C_FIELD   = 0xFF13131A;
-    private static final int C_STROKE  = 0xFF2A2A36;
-    private static final int C_TEXT    = 0xFFE5E7EB;
-    private static final int C_MUTED   = 0xFF9CA3AF;
-    private static final int C_DIM     = 0xFF6B7280;
-    private static final int C_ACCENT  = 0xFF4F46E5;
-
-    private static final int S_IDLE    = 0xFF6B7280;
-    private static final int S_LOADING = 0xFFFBBF24;
-    private static final int S_OK      = 0xFF34D399;
-    private static final int S_ERROR   = 0xFFF87171;
-
-    private SharedPreferences prefs;
+    private Theme t;
+    private ConnectionStore store;
     private FrameLayout root;
+    private FrameLayout content;
+    private LinearLayout nav;
+    private LinearLayout shell;
+    private final ImageView[] navIcons = new ImageView[3];
+    private final TextView[] navLabels = new TextView[3];
 
-    /** Toolbar + progress + WebView. Hidden while the address editor is open. */
-    private LinearLayout main;
-    private View dot;
-    private TextView hostLabel;
-    private ProgressBar progress;
-    private WebView web;
+    private int tab = TAB_SESSIONS;
+    private List<SessionInfo> sessions = new ArrayList<>();
+    private String sessionsError = "";
+    private boolean loadingSessions;
+    private long lastSessionsLoad;
+    private String renderedActiveId = "";
+    private boolean everResumed;
+    private long lastThemeDark = 0;
+    private AlertDialog progress;
 
-    /** Address editor overlay, or null. */
-    private View settings;
-
-    private ValueCallback<Uri[]> fileCallback;
-    private boolean failed = false;
-    private String loadedUrl;
-
-    /**
-     * Connect links from a scanned pairing code, in the order the server listed them.
-     * Empty when the address was typed by hand, which disables the fallback.
-     */
-    private final List<String> candidates = new ArrayList<>();
-    private int candidateIndex = -1;
-
-    /** Platform predictive-back callback (API 33+). */
-    private OnBackInvokedCallback backCallback;
-    /** Guards against a single physical back press being handled twice. */
-    private boolean backConsumed = false;
-
-    @Override protected void onCreate(Bundle b) {
-        super.onCreate(b);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        root = new FrameLayout(this);
-        root.setBackgroundColor(C_BG);
-        setContentView(root);
-        applyWindowInsets();
-        registerBackHandler();
-        String url = prefs.getString(KEY_URL, "");
-        if (url.isEmpty()) showSettings(); else showWeb(url, b);
-    }
-
-    private int dp(int v) { return (int) (v * getResources().getDisplayMetrics().density); }
-
-    // ---------- Window insets / edge-to-edge ----------
-
-    /**
-     * Android 15+ enforces edge-to-edge for targetSdk 35+, and on Android 11+ the window no
-     * longer resizes for the soft keyboard when decorFitsSystemWindows is false. So from
-     * API 30 we lay the content out ourselves from system-bar, cutout and IME insets.
-     * Older releases keep the classic fitsSystemWindows + adjustResize behaviour.
-     */
-    private void applyWindowInsets() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            getWindow().setDecorFitsSystemWindows(false);
-            root.setOnApplyWindowInsetsListener((v, insets) -> {
-                Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
-                Insets ime = insets.getInsets(WindowInsets.Type.ime());
-                v.setPadding(bars.left, bars.top, bars.right, Math.max(bars.bottom, ime.bottom));
-                return insets;
-            });
-        } else {
-            root.setFitsSystemWindows(true);
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        t = Theme.get(this);
+        lastThemeDark = t.dark ? 1 : 0;
+        store = new ConnectionStore(this);
+        store.migrateLegacy();
+        if (savedInstanceState != null) {
+            tab = savedInstanceState.getInt("tab", TAB_SESSIONS);
         }
-        root.requestApplyInsets();
+
+        root = new FrameLayout(this);
+        root.setBackgroundColor(t.bg);
+        setContentView(root);
+        Ui.systemBars(this, t);
+        applyInsets(root);
+
+        shell = new LinearLayout(this);
+        shell.setOrientation(LinearLayout.VERTICAL);
+        shell.setLayoutParams(new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        content = new FrameLayout(this);
+        shell.addView(content, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        nav = buildNav();
+        shell.addView(nav, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        root.addView(shell);
+        selectTab(tab, true);
+        registerBack();
     }
 
-    // ---------- Back handling ----------
+    // ---------- Navigation ----------
 
-    /**
-     * Apps targeting Android 16+ no longer receive onBackPressed()/KEYCODE_BACK, so the
-     * platform callback is registered on API 33+. Older releases use onBackPressed().
-     */
-    private void registerBackHandler() {
+    private LinearLayout buildNav() {
+        LinearLayout wrap = new LinearLayout(this);
+        wrap.setOrientation(LinearLayout.VERTICAL);
+        wrap.setBackgroundColor(t.navBg);
+
+        View border = new View(this);
+        border.setBackgroundColor(t.border);
+        wrap.addView(border, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, Ui.dp(this, 1))));
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 58)));
+
+        int[] icons = {R.drawable.ic_sessions, R.drawable.ic_connections, R.drawable.ic_settings};
+        int[] labels = {R.string.tab_sessions, R.string.tab_connections, R.string.tab_settings};
+
+        for (int i = 0; i < 3; i++) {
+            final int index = i;
+            LinearLayout item = new LinearLayout(this);
+            item.setOrientation(LinearLayout.VERTICAL);
+            item.setGravity(Gravity.CENTER);
+            item.setLayoutParams(new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+            item.setBackground(Ui.ripple(this, null, t.ripple));
+            item.setOnClickListener(v -> selectTab(index, false));
+
+            ImageView icon = Ui.icon(this, icons[i], t.dim, 22);
+            item.addView(icon);
+            navIcons[i] = icon;
+
+            TextView label = Ui.text(this, getString(labels[i]), 10.5f, t.dim, false);
+            LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            llp.topMargin = Ui.dp(this, 3);
+            item.addView(label, llp);
+            navLabels[i] = label;
+
+            row.addView(item);
+        }
+
+        wrap.addView(row);
+        return wrap;
+    }
+
+    private void updateNav() {
+        for (int i = 0; i < 3; i++) {
+            boolean on = i == tab;
+            int color = on ? t.text : t.dim;
+            if (navIcons[i] != null) navIcons[i].setColorFilter(color);
+            if (navLabels[i] != null) {
+                navLabels[i].setTextColor(on ? t.text : t.dim);
+                navLabels[i].setTypeface(null, on ? Typeface.BOLD : Typeface.NORMAL);
+            }
+        }
+    }
+
+    private void selectTab(int which, boolean forceRefresh) {
+        tab = which;
+        rebuild();
+        updateNav();
+        if (which == TAB_SESSIONS) {
+            refreshSessions(forceRefresh || sessions.isEmpty());
+        }
+    }
+
+    private void rebuild() {
+        if (content == null) return;
+        content.removeAllViews();
+        View page;
+        if (tab == TAB_CONNECTIONS) page = connectionsPage();
+        else if (tab == TAB_SETTINGS) page = settingsPage();
+        else page = sessionsPage();
+        content.addView(page, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        ConnectionStore.Connection active = store.active();
+        renderedActiveId = active == null ? "" : active.id;
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        Theme now = Theme.get(this);
+        int dark = now.dark ? 1 : 0;
+        if (dark != lastThemeDark) {
+            recreate();
+            return;
+        }
+        if (!everResumed) {
+            everResumed = true;
+            return;
+        }
+        ConnectionStore.Connection active = store.active();
+        String id = active == null ? "" : active.id;
+        if (!id.equals(renderedActiveId)) {
+            selectTab(tab, true);
+            return;
+        }
+        if (tab == TAB_SESSIONS) refreshSessions(false);
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putInt("tab", tab);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_ADD && resultCode == RESULT_OK) {
+            sessions.clear();
+            lastSessionsLoad = 0;
+            selectTab(TAB_SESSIONS, true);
+        } else if (requestCode == REQ_CHAT) {
+            refreshSessions(true);
+        }
+    }
+
+    // ---------- Sessions ----------
+
+    private View sessionsPage() {
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setBackgroundColor(t.bg);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(Ui.dp(this, 20), Ui.dp(this, 12), Ui.dp(this, 12), Ui.dp(this, 6));
+
+        LinearLayout titles = new LinearLayout(this);
+        titles.setOrientation(LinearLayout.VERTICAL);
+        titles.setLayoutParams(new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView title = Ui.text(this, getString(R.string.sessions_title), 28f, t.text, true);
+        title.setLetterSpacing(-0.02f);
+        titles.addView(title);
+
+        ConnectionStore.Connection active = store.active();
+        LinearLayout chip = connectionChip(active);
+        LinearLayout.LayoutParams chipLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        chipLp.topMargin = Ui.dp(this, 8);
+        titles.addView(chip, chipLp);
+        header.addView(titles);
+
+        ImageButton refresh = Ui.iconButton(this, R.drawable.ic_refresh, t.muted, R.string.cd_refresh, t);
+        refresh.setOnClickListener(v -> refreshSessions(true));
+        header.addView(refresh);
+
+        ImageButton add = Ui.iconButton(this, R.drawable.ic_add, t.text, R.string.cd_add, t);
+        add.setOnClickListener(v -> {
+            if (store.active() == null) startAdd();
+            else newSession();
+        });
+        header.addView(add);
+
+        page.addView(header);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setClipToPadding(false);
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(Ui.dp(this, 20), Ui.dp(this, 6), Ui.dp(this, 20), Ui.dp(this, 28));
+        scroll.addView(body, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        page.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        if (store.active() == null) {
+            body.addView(emptyState(R.drawable.ic_connections,
+                    getString(R.string.sessions_no_connection_title),
+                    getString(R.string.sessions_no_connection_body),
+                    getString(R.string.connections_add), this::startAdd));
+            return page;
+        }
+
+        if (loadingSessions && sessions.isEmpty()) {
+            LinearLayout box = new LinearLayout(this);
+            box.setGravity(Gravity.CENTER);
+            box.setPadding(0, Ui.dp(this, 48), 0, 0);
+            ProgressBar p = new ProgressBar(this);
+            box.addView(p);
+            body.addView(box);
+            return page;
+        }
+
+        if (!sessionsError.isEmpty() && sessions.isEmpty()) {
+            body.addView(errorCard(sessionsError, () -> refreshSessions(true)));
+            return page;
+        }
+
+        if (!sessionsError.isEmpty()) {
+            body.addView(errorCard(sessionsError, () -> refreshSessions(true)));
+            body.addView(space(10));
+        }
+
+        if (sessions.isEmpty()) {
+            body.addView(emptyState(R.drawable.ic_sessions,
+                    getString(R.string.sessions_empty_title),
+                    getString(R.string.sessions_empty_body),
+                    getString(R.string.sessions_new), this::newSession));
+            return page;
+        }
+
+        for (SessionInfo s : sessions) {
+            body.addView(sessionCard(s));
+            body.addView(space(10));
+        }
+        return page;
+    }
+
+    private LinearLayout connectionChip(ConnectionStore.Connection c) {
+        LinearLayout chip = new LinearLayout(this);
+        chip.setOrientation(LinearLayout.HORIZONTAL);
+        chip.setGravity(Gravity.CENTER_VERTICAL);
+        chip.setPadding(Ui.dp(this, 10), Ui.dp(this, 6), Ui.dp(this, 8), Ui.dp(this, 6));
+        chip.setBackground(Ui.ripple(this,
+                Ui.round(this, t.surface, 999, t.border, 1), t.ripple));
+        chip.setClickable(true);
+        chip.setFocusable(true);
+
+        View dot = new View(this);
+        dot.setBackground(Ui.round(this, c == null ? t.dim : t.ok, 999));
+        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(
+                Ui.dp(this, 7), Ui.dp(this, 7));
+        dlp.setMarginEnd(Ui.dp(this, 7));
+        chip.addView(dot, dlp);
+
+        TextView name = Ui.text(this,
+                c == null ? getString(R.string.connections_add) : c.name,
+                12.5f, t.text, true);
+        name.setMaxLines(1);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        name.setMaxWidth(Ui.dp(this, 200));
+        chip.addView(name);
+
+        ImageView chevron = Ui.icon(this, R.drawable.ic_chevron, t.dim, 14);
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
+                Ui.dp(this, 14), Ui.dp(this, 14));
+        clp.setMarginStart(Ui.dp(this, 2));
+        chip.addView(chevron, clp);
+
+        chip.setOnClickListener(v -> {
+            if (c == null) startAdd();
+            else selectTab(TAB_CONNECTIONS, true);
+        });
+        return chip;
+    }
+
+    private View sessionCard(SessionInfo s) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setBackground(Ui.ripple(this,
+                Ui.round(this, t.surface, 14, t.border, 1), t.ripple));
+        card.setPadding(Ui.dp(this, 16), Ui.dp(this, 14),
+                Ui.dp(this, 16), Ui.dp(this, 14));
+        card.setClickable(true);
+        card.setFocusable(true);
+
+        TextView title = Ui.text(this, s.displayTitle(), 16f, t.text, true);
+        title.setMaxLines(2);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        title.setLineSpacing(0, 1.2f);
+        card.addView(title);
+
+        LinearLayout meta = new LinearLayout(this);
+        meta.setOrientation(LinearLayout.HORIZONTAL);
+        meta.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams metaLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        metaLp.topMargin = Ui.dp(this, 9);
+        card.addView(meta, metaLp);
+
+        ImageView folder = Ui.icon(this, R.drawable.ic_folder, t.dim, 14);
+        meta.addView(folder);
+
+        TextView dir = Ui.text(this,
+                s.directory == null || s.directory.isEmpty()
+                        ? getString(R.string.sessions_default_folder)
+                        : Ui.shortDir(s.directory),
+                12f, t.muted, false);
+        dir.setMaxLines(1);
+        dir.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        LinearLayout.LayoutParams dirLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        dirLp.setMarginStart(Ui.dp(this, 6));
+        meta.addView(dir, dirLp);
+
+        TextView time = Ui.text(this, Ui.timeAgo(s.updated), 12f, t.muted, false);
+        LinearLayout.LayoutParams timeLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        timeLp.setMarginStart(Ui.dp(this, 8));
+        meta.addView(time, timeLp);
+
+        if (s.modelId != null && !s.modelId.isEmpty()) {
+            TextView model = Ui.text(this, Ui.shortModel(s.modelId), 10.5f, t.muted, false);
+            model.setBackground(Ui.round(this, t.field, 6));
+            model.setPadding(Ui.dp(this, 6), Ui.dp(this, 3),
+                    Ui.dp(this, 6), Ui.dp(this, 3));
+            LinearLayout.LayoutParams mlp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            mlp.setMarginStart(Ui.dp(this, 8));
+            meta.addView(model, mlp);
+        }
+
+        card.setOnClickListener(v -> openChat(s));
+        card.setOnLongClickListener(v -> {
+            showSessionMenu(s);
+            return true;
+        });
+        return card;
+    }
+
+    private void showSessionMenu(SessionInfo s) {
+        String[] items = {getString(R.string.common_open), getString(R.string.sessions_delete)};
+        AlertDialog dialog = new AlertDialog.Builder(this, Ui.dialogTheme(t))
+                .setTitle(s.displayTitle())
+                .setItems(items, (d, which) -> {
+                    if (which == 0) openChat(s);
+                    else confirmDeleteSession(s);
+                })
+                .setNegativeButton(R.string.common_cancel, null)
+                .show();
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(t.muted);
+    }
+
+    private void confirmDeleteSession(SessionInfo s) {
+        AlertDialog dialog = new AlertDialog.Builder(this, Ui.dialogTheme(t))
+                .setTitle(R.string.sessions_delete)
+                .setMessage(getString(R.string.sessions_delete_confirm, s.displayTitle()))
+                .setPositiveButton(R.string.common_delete, (d, which) -> deleteSession(s))
+                .setNegativeButton(R.string.common_cancel, null)
+                .show();
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(t.error);
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(t.muted);
+    }
+
+    private void deleteSession(SessionInfo s) {
+        ConnectionStore.Connection c = store.active();
+        if (c == null) return;
+        ApiClient api = new ApiClient(c.baseUrl, c.token);
+        Bg.run(() -> {
+            api.deleteSession(s.id);
+            return null;
+        }, v -> {
+            if (isFinishing() || isDestroyed()) return;
+            sessions.remove(s);
+            rebuild();
+        }, e -> {
+            if (isFinishing() || isDestroyed()) return;
+            toast(e);
+        });
+    }
+
+    private void refreshSessions(boolean force) {
+        ConnectionStore.Connection c = store.active();
+        if (c == null) {
+            sessions.clear();
+            sessionsError = "";
+            loadingSessions = false;
+            if (tab == TAB_SESSIONS) rebuild();
+            return;
+        }
+        if (loadingSessions) return;
+        long now = System.currentTimeMillis();
+        if (!force && now - lastSessionsLoad < 5000) return;
+
+        loadingSessions = true;
+        if (sessions.isEmpty() && tab == TAB_SESSIONS) rebuild();
+
+        ApiClient api = new ApiClient(c.baseUrl, c.token);
+        Bg.run(() -> api.sessions(60, null), list -> {
+            if (isFinishing() || isDestroyed()) return;
+            loadingSessions = false;
+            lastSessionsLoad = System.currentTimeMillis();
+            sessionsError = "";
+            List<SessionInfo> top = new ArrayList<>();
+            for (SessionInfo s : list) {
+                if (!s.isSubagent()) top.add(s);
+            }
+            Collections.sort(top, new Comparator<SessionInfo>() {
+                @Override public int compare(SessionInfo a, SessionInfo b) {
+                    return Long.compare(b.updated, a.updated);
+                }
+            });
+            sessions = top;
+            if (tab == TAB_SESSIONS) rebuild();
+        }, e -> {
+            if (isFinishing() || isDestroyed()) return;
+            loadingSessions = false;
+            lastSessionsLoad = System.currentTimeMillis();
+            if (e instanceof ApiClient.ApiException
+                    && ((ApiClient.ApiException) e).status == 401) {
+                sessionsError = getString(R.string.chat_expired) + " "
+                        + getString(R.string.chat_expired_body);
+            } else {
+                String m = e.getMessage();
+                sessionsError = m == null || m.isEmpty()
+                        ? getString(R.string.sessions_error_title) : m;
+            }
+            if (tab == TAB_SESSIONS) rebuild();
+        });
+    }
+
+    private void newSession() {
+        ConnectionStore.Connection c = store.active();
+        if (c == null) {
+            startAdd();
+            return;
+        }
+        ApiClient api = new ApiClient(c.baseUrl, c.token);
+        Bg.run(api::projects, projects -> {
+            if (isFinishing() || isDestroyed()) return;
+            if (projects.isEmpty()) {
+                new AlertDialog.Builder(this, Ui.dialogTheme(t))
+                        .setTitle(R.string.sessions_new)
+                        .setMessage(R.string.sessions_default_body)
+                        .setPositiveButton(R.string.sessions_new,
+                                (d, which) -> createSession(null))
+                        .setNegativeButton(R.string.common_cancel, null)
+                        .show();
+                return;
+            }
+            int n = Math.min(projects.size(), 20);
+            String[] labels = new String[n];
+            for (int i = 0; i < n; i++) labels[i] = projects.get(i).canonical;
+            AlertDialog dialog = new AlertDialog.Builder(this, Ui.dialogTheme(t))
+                    .setTitle(R.string.sessions_pick_project)
+                    .setItems(labels, (d, which) ->
+                            createSession(projects.get(which).canonical))
+                    .setNegativeButton(R.string.common_cancel, null)
+                    .show();
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(t.muted);
+        }, e -> {
+            if (isFinishing() || isDestroyed()) return;
+            toast(e);
+        });
+    }
+
+    private void createSession(String directory) {
+        ConnectionStore.Connection c = store.active();
+        if (c == null) return;
+        ApiClient api = new ApiClient(c.baseUrl, c.token);
+        // Inherit the most recently used model. Without this the server falls back to its own
+        // default, which can be a model the user has never selected (or one that is unavailable).
+        SessionInfo seed = null;
+        for (SessionInfo s : sessions) {
+            if (s.modelId != null && !s.modelId.isEmpty()
+                    && s.providerId != null && !s.providerId.isEmpty()) {
+                seed = s;
+                break;
+            }
+        }
+        final SessionInfo model = seed;
+        progress = Ui.progressDialog(this, t, getString(R.string.sessions_creating));
+        progress.show();
+        Bg.run(() -> api.createSession(directory,
+                        model == null ? null : model.providerId,
+                        model == null ? null : model.modelId,
+                        model == null ? null : model.variant), s -> {
+            if (progress != null && progress.isShowing()) progress.dismiss();
+            if (isFinishing() || isDestroyed()) return;
+            sessions.clear();
+            lastSessionsLoad = 0;
+            openChat(s);
+        }, e -> {
+            if (progress != null && progress.isShowing()) progress.dismiss();
+            if (isFinishing() || isDestroyed()) return;
+            toast(e);
+        });
+    }
+
+    private void openChat(SessionInfo s) {
+        ConnectionStore.Connection c = store.active();
+        if (c == null) {
+            startAdd();
+            return;
+        }
+        Intent i = new Intent(this, ChatActivity.class);
+        i.putExtra(ChatActivity.EXTRA_CONNECTION, c.id);
+        i.putExtra(ChatActivity.EXTRA_SESSION, s.id);
+        i.putExtra(ChatActivity.EXTRA_TITLE, s.displayTitle());
+        i.putExtra(ChatActivity.EXTRA_MODEL, s.modelId);
+        startActivityForResult(i, REQ_CHAT);
+    }
+
+    // ---------- Connections ----------
+
+    private View connectionsPage() {
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setBackgroundColor(t.bg);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(Ui.dp(this, 20), Ui.dp(this, 12), Ui.dp(this, 12), Ui.dp(this, 6));
+        TextView title = Ui.text(this, getString(R.string.connections_title), 28f, t.text, true);
+        title.setLetterSpacing(-0.02f);
+        title.setLayoutParams(new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        header.addView(title);
+        ImageButton add = Ui.iconButton(this, R.drawable.ic_add, t.text, R.string.cd_add, t);
+        add.setOnClickListener(v -> startAdd());
+        header.addView(add);
+        page.addView(header);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setClipToPadding(false);
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(Ui.dp(this, 20), Ui.dp(this, 6), Ui.dp(this, 20), Ui.dp(this, 28));
+        scroll.addView(body, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        page.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        List<ConnectionStore.Connection> all = store.list();
+        if (all.isEmpty()) {
+            body.addView(emptyState(R.drawable.ic_connections,
+                    getString(R.string.connections_empty_title),
+                    getString(R.string.connections_empty_body),
+                    getString(R.string.connections_add), this::startAdd));
+        } else {
+            ConnectionStore.Connection active = store.active();
+            String activeId = active == null ? "" : active.id;
+            for (ConnectionStore.Connection c : all) {
+                body.addView(connectionCard(c, c.id.equals(activeId)));
+                body.addView(space(10));
+            }
+            TextView addBtn = Ui.button(this, t, getString(R.string.connections_add), false);
+            addBtn.setOnClickListener(v -> startAdd());
+            LinearLayout.LayoutParams addLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 50));
+            addLp.topMargin = Ui.dp(this, 4);
+            body.addView(addBtn, addLp);
+        }
+
+        LinearLayout how = new LinearLayout(this);
+        how.setOrientation(LinearLayout.VERTICAL);
+        how.setBackground(Ui.round(this, t.surface, 14, t.border, 1));
+        how.setPadding(Ui.dp(this, 16), Ui.dp(this, 16),
+                Ui.dp(this, 16), Ui.dp(this, 16));
+        TextView howTitle = Ui.label(this, getString(R.string.connections_how_title), t.muted);
+        how.addView(howTitle);
+        TextView howBody = Ui.text(this, getString(R.string.connections_how_body), 12.5f, t.muted, false);
+        howBody.setLineSpacing(0, 1.42f);
+        LinearLayout.LayoutParams howLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        howLp.topMargin = Ui.dp(this, 8);
+        how.addView(howBody, howLp);
+        LinearLayout.LayoutParams howWrap = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        howWrap.topMargin = Ui.dp(this, 20);
+        body.addView(how, howWrap);
+
+        return page;
+    }
+
+    private View connectionCard(ConnectionStore.Connection c, boolean active) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setBackground(Ui.ripple(this,
+                Ui.round(this, t.surface, 14, active ? t.text : t.border, active ? 1.5f : 1f),
+                t.ripple));
+        card.setPadding(Ui.dp(this, 16), Ui.dp(this, 14),
+                Ui.dp(this, 16), Ui.dp(this, 14));
+        card.setClickable(true);
+        card.setFocusable(true);
+
+        LinearLayout top = new LinearLayout(this);
+        top.setOrientation(LinearLayout.HORIZONTAL);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        TextView name = Ui.text(this, c.name, 16f, t.text, true);
+        name.setLayoutParams(new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        name.setMaxLines(1);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        top.addView(name);
+
+        LinearLayout status = new LinearLayout(this);
+        status.setOrientation(LinearLayout.HORIZONTAL);
+        status.setGravity(Gravity.CENTER_VERTICAL);
+        if (active) {
+            View dot = new View(this);
+            dot.setBackground(Ui.round(this, t.ok, 999));
+            LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(
+                    Ui.dp(this, 6), Ui.dp(this, 6));
+            dlp.setMarginEnd(Ui.dp(this, 5));
+            status.addView(dot, dlp);
+        }
+        TextView state = Ui.text(this,
+                getString(active ? R.string.connections_active : R.string.connections_tap_to_use),
+                11.5f, active ? t.ok : t.dim, false);
+        status.addView(state);
+        top.addView(status);
+        card.addView(top);
+
+        TextView host = Ui.text(this, c.host(), 12.5f, t.muted, false);
+        host.setMaxLines(1);
+        host.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        LinearLayout.LayoutParams hostLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        hostLp.topMargin = Ui.dp(this, 6);
+        card.addView(host, hostLp);
+
+        card.setOnClickListener(v -> activateConnection(c));
+        card.setOnLongClickListener(v -> {
+            showConnectionMenu(c);
+            return true;
+        });
+        return card;
+    }
+
+    private void activateConnection(ConnectionStore.Connection c) {
+        ConnectionStore.Connection prev = store.active();
+        if (prev == null || !prev.id.equals(c.id)) {
+            sessions.clear();
+            lastSessionsLoad = 0;
+        }
+        store.setActive(c.id);
+        selectTab(TAB_SESSIONS, true);
+    }
+
+    private void showConnectionMenu(ConnectionStore.Connection c) {
+        String[] items = {
+                getString(R.string.connections_rename),
+                getString(R.string.connections_delete)
+        };
+        AlertDialog dialog = new AlertDialog.Builder(this, Ui.dialogTheme(t))
+                .setTitle(c.name)
+                .setItems(items, (d, which) -> {
+                    if (which == 0) renameConnection(c);
+                    else confirmRemoveConnection(c);
+                })
+                .setNegativeButton(R.string.common_cancel, null)
+                .show();
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(t.muted);
+    }
+
+    private void renameConnection(ConnectionStore.Connection c) {
+        EditText input = Ui.field(this, t, getString(R.string.connections_name_hint),
+                android.text.InputType.TYPE_CLASS_TEXT, false);
+        input.setText(c.name);
+        input.setSelectAllOnFocus(true);
+        LinearLayout box = new LinearLayout(this);
+        box.setPadding(Ui.dp(this, 20), Ui.dp(this, 8), Ui.dp(this, 20), 0);
+        box.addView(input, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        new AlertDialog.Builder(this, Ui.dialogTheme(t))
+                .setTitle(R.string.connections_rename)
+                .setView(box)
+                .setPositiveButton(R.string.common_save, (d, which) -> {
+                    store.rename(c.id, input.getText().toString());
+                    rebuild();
+                })
+                .setNegativeButton(R.string.common_cancel, null)
+                .show();
+    }
+
+    private void confirmRemoveConnection(ConnectionStore.Connection c) {
+        AlertDialog dialog = new AlertDialog.Builder(this, Ui.dialogTheme(t))
+                .setTitle(R.string.connections_delete)
+                .setMessage(getString(R.string.connections_delete_confirm, c.name))
+                .setPositiveButton(R.string.common_remove, (d, which) -> {
+                    if (c.id.equals(store.active() == null ? "" : store.active().id)) {
+                        sessions.clear();
+                        lastSessionsLoad = 0;
+                    }
+                    store.remove(c.id);
+                    selectTab(tab, true);
+                })
+                .setNegativeButton(R.string.common_cancel, null)
+                .show();
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(t.error);
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(t.muted);
+    }
+
+    // ---------- Settings ----------
+
+    private View settingsPage() {
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setBackgroundColor(t.bg);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setPadding(Ui.dp(this, 20), Ui.dp(this, 12), Ui.dp(this, 20), Ui.dp(this, 6));
+        TextView title = Ui.text(this, getString(R.string.settings_title), 28f, t.text, true);
+        title.setLetterSpacing(-0.02f);
+        header.addView(title);
+        page.addView(header);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setClipToPadding(false);
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(Ui.dp(this, 20), Ui.dp(this, 6), Ui.dp(this, 20), Ui.dp(this, 32));
+        scroll.addView(body, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        page.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        body.addView(Ui.label(this, getString(R.string.settings_connection), t.muted));
+        body.addView(space(8));
+
+        ConnectionStore.Connection active = store.active();
+        if (active == null) {
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setBackground(Ui.round(this, t.surface, 14, t.border, 1));
+            card.setPadding(Ui.dp(this, 16), Ui.dp(this, 16),
+                    Ui.dp(this, 16), Ui.dp(this, 16));
+            TextView none = Ui.text(this, getString(R.string.settings_no_connection), 15f, t.text, true);
+            card.addView(none);
+            TextView hint = Ui.text(this, getString(R.string.connections_empty_body), 12.5f, t.muted, false);
+            hint.setLineSpacing(0, 1.4f);
+            LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            hlp.topMargin = Ui.dp(this, 6);
+            card.addView(hint, hlp);
+            body.addView(card);
+            TextView pair = Ui.button(this, t, getString(R.string.settings_pair), true);
+            pair.setOnClickListener(v -> startAdd());
+            LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 50));
+            plp.topMargin = Ui.dp(this, 12);
+            body.addView(pair, plp);
+        } else {
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setBackground(Ui.round(this, t.surface, 14, t.border, 1));
+            card.setPadding(Ui.dp(this, 16), Ui.dp(this, 16),
+                    Ui.dp(this, 16), Ui.dp(this, 16));
+            LinearLayout top = new LinearLayout(this);
+            top.setOrientation(LinearLayout.HORIZONTAL);
+            top.setGravity(Gravity.CENTER_VERTICAL);
+            TextView name = Ui.text(this, active.name, 15f, t.text, true);
+            name.setLayoutParams(new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            top.addView(name);
+            View dot = new View(this);
+            dot.setBackground(Ui.round(this, t.ok, 999));
+            LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(
+                    Ui.dp(this, 6), Ui.dp(this, 6));
+            dlp.setMarginEnd(Ui.dp(this, 5));
+            top.addView(dot, dlp);
+            top.addView(Ui.text(this, getString(R.string.connections_active),
+                    11.5f, t.ok, false));
+            card.addView(top);
+            TextView host = Ui.text(this, active.host(), 12.5f, t.muted, false);
+            LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            hlp.topMargin = Ui.dp(this, 6);
+            card.addView(host, hlp);
+            body.addView(card);
+
+            TextView pair = Ui.button(this, t, getString(R.string.settings_pair_new), false);
+            pair.setOnClickListener(v -> startAdd());
+            LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48));
+            plp.topMargin = Ui.dp(this, 12);
+            body.addView(pair, plp);
+
+            TextView web = Ui.button(this, t, getString(R.string.settings_web), false);
+            web.setOnClickListener(v -> openWeb());
+            LinearLayout.LayoutParams wlp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48));
+            wlp.topMargin = Ui.dp(this, 8);
+            body.addView(web, wlp);
+
+            TextView remove = Ui.dangerButton(this, t, getString(R.string.settings_remove));
+            remove.setOnClickListener(v -> confirmRemoveConnection(active));
+            LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            rlp.topMargin = Ui.dp(this, 8);
+            body.addView(remove, rlp);
+        }
+
+        LinearLayout.LayoutParams sectionLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        sectionLp.topMargin = Ui.dp(this, 26);
+        body.addView(Ui.label(this, getString(R.string.settings_appearance), t.muted), sectionLp);
+        body.addView(space(8));
+        body.addView(themeSegments());
+
+        LinearLayout.LayoutParams aboutLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        aboutLp.topMargin = Ui.dp(this, 26);
+        body.addView(Ui.label(this, getString(R.string.settings_about), t.muted), aboutLp);
+        body.addView(space(8));
+        body.addView(aboutCard());
+
+        return page;
+    }
+
+    private View themeSegments() {
+        String mode = Theme.mode(this);
+        LinearLayout seg = new LinearLayout(this);
+        seg.setOrientation(LinearLayout.HORIZONTAL);
+        seg.setBackground(Ui.round(this, t.field, 12, t.border, 1));
+        seg.setPadding(Ui.dp(this, 3), Ui.dp(this, 3), Ui.dp(this, 3), Ui.dp(this, 3));
+
+        String[][] options = {
+                {Theme.MODE_SYSTEM, getString(R.string.settings_system)},
+                {Theme.MODE_LIGHT, getString(R.string.settings_light)},
+                {Theme.MODE_DARK, getString(R.string.settings_dark)}
+        };
+        for (String[] option : options) {
+            boolean on = option[0].equals(mode);
+            TextView b = Ui.text(this, option[1], 13f, on ? t.ctaText : t.muted, on);
+            b.setGravity(Gravity.CENTER);
+            b.setPadding(0, Ui.dp(this, 10), 0, Ui.dp(this, 10));
+            b.setBackground(Ui.round(this, on ? t.cta : 0, 9));
+            b.setClickable(true);
+            b.setFocusable(true);
+            b.setOnClickListener(v -> {
+                Theme.setMode(this, option[0]);
+                recreate();
+            });
+            seg.addView(b, new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        }
+        return seg;
+    }
+
+    private View aboutCard() {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setBackground(Ui.round(this, t.surface, 14, t.border, 1));
+        card.setPadding(Ui.dp(this, 16), Ui.dp(this, 16),
+                Ui.dp(this, 16), Ui.dp(this, 16));
+
+        TextView name = Ui.text(this, getString(R.string.app_name), 15f, t.text, true);
+        card.addView(name);
+        String version = "1.0";
+        try {
+            version = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception ignored) { }
+        TextView ver = Ui.text(this, getString(R.string.settings_version, version),
+                12f, t.muted, false);
+        LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        vlp.topMargin = Ui.dp(this, 4);
+        card.addView(ver, vlp);
+
+        TextView body = Ui.text(this, getString(R.string.settings_about_body), 12.5f, t.muted, false);
+        body.setLineSpacing(0, 1.4f);
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        blp.topMargin = Ui.dp(this, 10);
+        card.addView(body, blp);
+
+        TextView disclaimer = Ui.text(this, getString(R.string.settings_disclaimer),
+                11f, t.dim, false);
+        disclaimer.setLineSpacing(0, 1.4f);
+        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        dlp.topMargin = Ui.dp(this, 12);
+        card.addView(disclaimer, dlp);
+        return card;
+    }
+
+    // ---------- Shared helpers ----------
+
+    private View emptyState(int iconRes, String title, String body,
+                            String buttonLabel, Runnable action) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        box.setPadding(Ui.dp(this, 16), Ui.dp(this, 44),
+                Ui.dp(this, 16), Ui.dp(this, 24));
+
+        ImageView icon = Ui.icon(this, iconRes, t.dim, 46);
+        LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(
+                Ui.dp(this, 46), Ui.dp(this, 46));
+        ilp.gravity = Gravity.CENTER_HORIZONTAL;
+        box.addView(icon, ilp);
+
+        TextView t1 = Ui.text(this, title, 19f, t.text, true);
+        t1.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        tlp.topMargin = Ui.dp(this, 18);
+        box.addView(t1, tlp);
+
+        TextView t2 = Ui.text(this, body, 13f, t.muted, false);
+        t2.setGravity(Gravity.CENTER);
+        t2.setLineSpacing(0, 1.45f);
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        blp.topMargin = Ui.dp(this, 8);
+        blp.leftMargin = Ui.dp(this, 8);
+        blp.rightMargin = Ui.dp(this, 8);
+        box.addView(t2, blp);
+
+        TextView button = Ui.button(this, t, buttonLabel, true);
+        button.setOnClickListener(v -> action.run());
+        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 48));
+        btnLp.gravity = Gravity.CENTER_HORIZONTAL;
+        btnLp.topMargin = Ui.dp(this, 22);
+        box.addView(button, btnLp);
+        return box;
+    }
+
+    private View errorCard(String message, Runnable retry) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setBackground(Ui.round(this, t.surface, 14, t.border, 1));
+        card.setPadding(Ui.dp(this, 16), Ui.dp(this, 16),
+                Ui.dp(this, 16), Ui.dp(this, 16));
+
+        TextView title = Ui.text(this, getString(R.string.sessions_error_title), 15f, t.text, true);
+        card.addView(title);
+        TextView body = Ui.text(this, message, 12.5f, t.muted, false);
+        body.setLineSpacing(0, 1.4f);
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        blp.topMargin = Ui.dp(this, 6);
+        card.addView(body, blp);
+
+        TextView retryBtn = Ui.button(this, t, getString(R.string.common_retry), false);
+        retryBtn.setOnClickListener(v -> retry.run());
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 42));
+        rlp.topMargin = Ui.dp(this, 12);
+        card.addView(retryBtn, rlp);
+        return card;
+    }
+
+    private View space(int dp) {
+        return Ui.spacer(this, dp);
+    }
+
+    private void startAdd() {
+        startActivityForResult(new Intent(this, AddConnectionActivity.class), REQ_ADD);
+    }
+
+    private void openWeb() {
+        ConnectionStore.Connection c = store.active();
+        if (c == null) {
+            startAdd();
+            return;
+        }
+        ConnectionStore.setWebCookie(this, c.baseUrl, c.token);
+        Intent i = new Intent(this, WebActivity.class);
+        i.putExtra(WebActivity.EXTRA_CONNECTION, c.id);
+        startActivity(i);
+    }
+
+    private void toast(Exception e) {
+        String msg = e == null ? null : e.getMessage();
+        if (msg == null || msg.isEmpty()) msg = getString(R.string.common_error);
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
+    }
+
+    private void registerBack() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            backCallback = this::handleBack;
             getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
-                    OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback);
+                    OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::handleBack);
         }
     }
 
     private void handleBack() {
-        if (backConsumed) return;
-        backConsumed = true;
-        root.post(() -> backConsumed = false);
-
-        if (settings != null) {                    // cancel the address editor
-            if (web != null) resumeWeb(); else finish();
-            return;
-        }
-        if (web != null && web.getVisibility() == View.VISIBLE && !failed && web.canGoBack()) {
-            web.goBack();
-            return;
-        }
-        finish();
-    }
-
-    /**
-     * Legacy path: only reached on API 26-32, where the predictive back system does not exist
-     * and onBackPressed() is still delivered. On API 33+ the OnBackInvokedCallback above is
-     * used instead, so lint's GestureBackNavigation warning does not apply here.
-     */
-    @SuppressLint("GestureBackNavigation")
-    @Override public void onBackPressed() { handleBack(); }
-
-    // ---------- Address editor ----------
-
-    private void showSettings() {
-        if (main != null) main.setVisibility(View.GONE);
-        if (settings != null) root.removeView(settings);
-
-        ScrollView sv = new ScrollView(this);
-        sv.setFillViewport(true);
-        sv.setBackgroundColor(C_BG);
-
-        LinearLayout col = new LinearLayout(this);
-        col.setOrientation(LinearLayout.VERTICAL);
-        col.setPadding(dp(24), dp(48), dp(24), dp(24));
-
-        // App mark
-        FrameLayout mark = new FrameLayout(this);
-        GradientDrawable mb = new GradientDrawable();
-        mb.setColor(C_ACCENT);
-        mb.setCornerRadius(dp(16));
-        mark.setBackground(mb);
-        ImageView markIcon = new ImageView(this);
-        markIcon.setImageResource(R.drawable.ic_fg);
-        markIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        mark.addView(markIcon, new FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER));
-        col.addView(mark, new LinearLayout.LayoutParams(dp(56), dp(56)));
-
-        TextView title = new TextView(this);
-        title.setText(R.string.connect_title);
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(26);
-        title.setTypeface(null, Typeface.BOLD);
-        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        tlp.topMargin = dp(20);
-        col.addView(title, tlp);
-
-        TextView sub = new TextView(this);
-        sub.setText(R.string.connect_subtitle);
-        sub.setTextColor(C_MUTED);
-        sub.setTextSize(13.5f);
-        sub.setLineSpacing(0f, 1.15f);
-        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        slp.topMargin = dp(8);
-        slp.bottomMargin = dp(28);
-        col.addView(sub, slp);
-
-        TextView label = new TextView(this);
-        label.setText(R.string.label_server_address);
-        label.setTextColor(C_DIM);
-        label.setTextSize(11);
-        label.setAllCaps(true);
-        label.setLetterSpacing(0.09f);
-        label.setTypeface(null, Typeface.BOLD);
-        LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        llp.bottomMargin = dp(8);
-        col.addView(label, llp);
-
-        final EditText input = new EditText(this);
-        input.setHint(R.string.connect_hint);
-        input.setHintTextColor(C_DIM);
-        input.setTextColor(C_TEXT);
-        input.setTextSize(14);
-        input.setTypeface(Typeface.MONOSPACE);
-        input.setSingleLine(true);
-        input.setGravity(Gravity.CENTER_VERTICAL);
-        input.setInputType(android.text.InputType.TYPE_CLASS_TEXT
-                | android.text.InputType.TYPE_TEXT_VARIATION_URI);
-        input.setImeOptions(EditorInfo.IME_ACTION_GO);
-        input.setPadding(dp(16), 0, dp(16), 0);
-        input.setBackground(fieldBackground());
-        input.setText(prefs.getString(KEY_URL, ""));
-        col.addView(input, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
-
-        final TextView err = new TextView(this);
-        err.setTextColor(S_ERROR);
-        err.setTextSize(12.5f);
-        err.setPadding(0, dp(8), 0, 0);
-        col.addView(err);
-
-        Button go = new Button(this);
-        go.setText(R.string.connect_action);
-        go.setAllCaps(false);
-        go.setTextColor(Color.WHITE);
-        go.setTextSize(15.5f);
-        go.setTypeface(null, Typeface.BOLD);
-        GradientDrawable gb = new GradientDrawable();
-        gb.setColor(C_ACCENT);
-        gb.setCornerRadius(dp(12));
-        go.setBackground(gb);
-        go.setStateListAnimator(null);
-        LinearLayout.LayoutParams glp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
-        glp.topMargin = dp(22);
-        col.addView(go, glp);
-
-        Button scanBtn = new Button(this);
-        scanBtn.setText(R.string.connect_scan);
-        scanBtn.setAllCaps(false);
-        scanBtn.setTextColor(C_TEXT);
-        scanBtn.setTextSize(15f);
-        scanBtn.setTypeface(null, Typeface.BOLD);
-        scanBtn.setBackground(outlineBackground());
-        scanBtn.setStateListAnimator(null);
-        scanBtn.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_qr, 0, 0, 0);
-        scanBtn.setCompoundDrawablePadding(dp(10));
-        scanBtn.setOnClickListener(v -> startScan());
-        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
-        blp.topMargin = dp(10);
-        col.addView(scanBtn, blp);
-
-        TextView hint = new TextView(this);
-        hint.setText(R.string.hint_server);
-        hint.setTextColor(C_DIM);
-        hint.setTextSize(12);
-        hint.setLineSpacing(0f, 1.3f);
-        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        hlp.topMargin = dp(16);
-        col.addView(hint, hlp);
-
-        col.addView(new View(this), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-
-        TextView foot = new TextView(this);
-        foot.setText(R.string.footnote_saved);
-        foot.setTextColor(0xFF4B5563);
-        foot.setTextSize(11);
-        col.addView(foot);
-
-        final Runnable submit = () -> {
-            String text = input.getText().toString().trim();
-
-            // The QR payload is JSON, but it can also be pasted as text.
-            if (text.startsWith("{")) {
-                List<String> urls = PairPayload.parse(text);
-                if (urls.isEmpty()) { err.setText(R.string.connect_invalid); return; }
-                hideKeyboard(input);
-                startPairing(urls);
-                return;
-            }
-
-            String u = normalize(text);
-            if (u == null) { err.setText(R.string.connect_invalid); return; }
-            if (PairPayload.isLoopback(u)) { err.setText(R.string.connect_loopback); return; }
-            candidates.clear();
-            candidateIndex = -1;
-            prefs.edit().putString(KEY_URL, u).apply();
-            hideKeyboard(input);
-            showWeb(u, null);
-        };
-        go.setOnClickListener(v -> submit.run());
-        input.setOnEditorActionListener((v, a, e) -> { submit.run(); return true; });
-
-        sv.addView(col, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        settings = sv;
-        root.addView(sv, new FrameLayout.LayoutParams(-1, -1));
-    }
-
-    private GradientDrawable fieldBackground() {
-        GradientDrawable d = new GradientDrawable();
-        d.setColor(C_FIELD);
-        d.setCornerRadius(dp(12));
-        d.setStroke(dp(1), C_STROKE);
-        return d;
-    }
-
-    private GradientDrawable outlineBackground() {
-        GradientDrawable d = new GradientDrawable();
-        d.setColor(C_SURFACE);
-        d.setCornerRadius(dp(12));
-        d.setStroke(dp(1), C_STROKE);
-        return d;
-    }
-
-    private void hideKeyboard(View v) {
-        InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-        imm.hideSoftInputFromWindow(v.getWindowToken(), 0);
-    }
-
-    /** Closes the address editor and returns to the existing page without reloading it. */
-    private void resumeWeb() {
-        if (settings != null) { root.removeView(settings); settings = null; }
-        if (main != null) main.setVisibility(View.VISIBLE);
-    }
-
-    /**
-     * Accepts a bare host, host:port or full URL and returns a normalised http(s) URL.
-     * Anything else (file:, javascript:, content:, ...) is rejected.
-     */
-    private String normalize(String s) {
-        s = s.trim();
-        if (s.isEmpty() || s.contains(" ")) return null;
-        if (!s.matches("^[a-zA-Z][a-zA-Z0-9+.-]*://.*")) s = "http://" + s;
-        Uri u = Uri.parse(s);
-        String scheme = u.getScheme();
-        if (scheme == null) return null;
-        scheme = scheme.toLowerCase(Locale.US);
-        if (!"http".equals(scheme) && !"https".equals(scheme)) return null;
-        String host = u.getHost();
-        if (host == null || host.isEmpty()) return null;
-        return s;
-    }
-
-    // ---------- Pairing: QR codes and the three printed links ----------
-
-    private void startScan() {
-        try {
-            startActivityForResult(new Intent(this, ScanActivity.class), REQ_SCAN);
-        } catch (Exception e) {
-            Toast.makeText(this, R.string.scan_no_camera, Toast.LENGTH_LONG).show();
-        }
-    }
-
-    private void handlePairingPayload(String raw) {
-        List<String> urls = PairPayload.parse(raw);
-        if (urls.isEmpty()) {
-            Toast.makeText(this, R.string.scan_not_pairing, Toast.LENGTH_LONG).show();
-            return;
-        }
-        startPairing(urls);
-    }
-
-    /**
-     * Connects to the first candidate and remembers the rest. Every candidate carries the same
-     * single-use code, so if the LAN address is unreachable the tunnel address is tried next.
-     */
-    private void startPairing(List<String> urls) {
-        if (urls.isEmpty()) return;
-        candidates.clear();
-        candidates.addAll(urls);
-        candidateIndex = 0;
-        String first = candidates.get(0);
-        prefs.edit().putString(KEY_URL, first).apply();
-        showWeb(first, null);
-    }
-
-    /** Moves to the next pairing candidate. False when there is nothing left to try. */
-    private boolean tryNextCandidate(WebView v) {
-        if (candidateIndex < 0 || candidateIndex + 1 >= candidates.size()) return false;
-        candidateIndex++;
-        String next = candidates.get(candidateIndex);
-        prefs.edit().putString(KEY_URL, next).apply();
-        loadedUrl = next;
-        updateHost(next);
-        failed = false;
-        setStatus(S_LOADING);
-        if (progress != null) progress.setVisibility(View.VISIBLE);
-        v.loadUrl(next);
-        return true;
-    }
-
-    /**
-     * A pairing link is single-use, so once it has been redeemed the page it led to is what
-     * should be reopened next time. The session cookie makes that page work again.
-     */
-    private void rememberWorkingUrl(String url) {
-        if (url == null || !url.startsWith("http")) return;
-        String saved = prefs.getString(KEY_URL, "");
-        if (!PairPayload.isPairingLink(saved) || PairPayload.isPairingLink(url)) return;
-        if (!PairPayload.hostOf(saved).equals(PairPayload.hostOf(url))) return;   // same server only
-        prefs.edit().putString(KEY_URL, url).apply();
-        loadedUrl = url;
-    }
-
-    // ---------- WebView + toolbar ----------
-
-    private void showWeb(String url, Bundle saved) {
-        if (settings != null) { root.removeView(settings); settings = null; }
-        if (main == null) buildMain();
-        main.setVisibility(View.VISIBLE);
-        updateHost(url);
-
-        boolean wasFailed = failed;
-        failed = false;
-
-        if (saved != null && web.restoreState(saved) != null) {
-            loadedUrl = url;
-            setStatus(S_OK);
-            return;
-        }
-        boolean same = url.equals(loadedUrl);
-        if (same && !wasFailed && web.getUrl() != null) return;   // already showing this page
-        loadedUrl = url;
-        setStatus(S_LOADING);
-        web.loadUrl(url);
-    }
-
-    private void buildMain() {
-        main = new LinearLayout(this);
-        main.setOrientation(LinearLayout.VERTICAL);
-
-        LinearLayout topBar = new LinearLayout(this);
-        topBar.setOrientation(LinearLayout.HORIZONTAL);
-        topBar.setGravity(Gravity.CENTER_VERTICAL);
-        topBar.setBackgroundResource(R.drawable.bg_topbar);
-        topBar.setPadding(dp(16), 0, dp(6), 0);
-
-        dot = new View(this);
-        GradientDrawable dotBg = new GradientDrawable();
-        dotBg.setShape(GradientDrawable.OVAL);
-        dotBg.setColor(S_IDLE);
-        dot.setBackground(dotBg);
-        topBar.addView(dot, new LinearLayout.LayoutParams(dp(8), dp(8)));
-
-        hostLabel = new TextView(this);
-        hostLabel.setTextColor(C_MUTED);
-        hostLabel.setTextSize(12.5f);
-        hostLabel.setTypeface(Typeface.MONOSPACE);
-        hostLabel.setSingleLine(true);
-        hostLabel.setEllipsize(TextUtils.TruncateAt.MIDDLE);
-        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        hlp.setMarginStart(dp(10));
-        topBar.addView(hostLabel, hlp);
-
-        ImageButton reloadBtn = iconButton(R.drawable.ic_refresh, R.string.cd_reload);
-        reloadBtn.setOnClickListener(v -> reload());
-        reloadBtn.setOnLongClickListener(v -> { showSettings(); return true; });
-        topBar.addView(reloadBtn, new LinearLayout.LayoutParams(dp(40), dp(40)));
-
-        ImageButton settingsBtn = iconButton(R.drawable.ic_settings, R.string.cd_settings);
-        settingsBtn.setOnClickListener(v -> showSettings());
-        topBar.addView(settingsBtn, new LinearLayout.LayoutParams(dp(40), dp(40)));
-
-        main.addView(topBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
-
-        progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        progress.setMax(100);
-        progress.setVisibility(View.INVISIBLE);          // reserve the 2dp so nothing jumps
-        progress.setProgressTintList(ColorStateList.valueOf(C_ACCENT));
-        progress.setProgressBackgroundTintList(ColorStateList.valueOf(C_SURFACE));
-        main.addView(progress, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)));
-
-        web = new WebView(this);
-        web.setBackgroundColor(C_BG);
-        WebSettings s = web.getSettings();
-        s.setJavaScriptEnabled(true);
-        s.setDomStorageEnabled(true);
-        s.setDatabaseEnabled(true);
-        s.setMediaPlaybackRequiresUserGesture(false);
-        s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-        s.setAllowFileAccess(false);
-        s.setAllowContentAccess(false);
-        s.setLoadWithOverviewMode(true);
-        s.setUseWideViewPort(true);
-        s.setBuiltInZoomControls(false);
-        s.setSupportZoom(false);
-        s.setCacheMode(WebSettings.LOAD_DEFAULT);
-        CookieManager cm = CookieManager.getInstance();
-        cm.setAcceptCookie(true);
-        cm.setAcceptThirdPartyCookies(web, true);
-
-        web.setWebViewClient(new WebViewClient() {
-            @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
-                Uri u = r.getUrl();
-                String scheme = u.getScheme() == null ? null : u.getScheme().toLowerCase(Locale.US);
-                if (SCHEME_APP.equals(scheme)) {
-                    if ("edit".equals(u.getHost())) showSettings(); else reload();
-                    return true;
-                }
-                if ("http".equals(scheme) || "https".equals(scheme)) {
-                    String base = prefs.getString(KEY_URL, "");
-                    String bh = Uri.parse(base).getHost();
-                    boolean sameHost = u.getHost() != null && u.getHost().equals(bh);
-                    if (!sameHost && r.isForMainFrame() && r.hasGesture()) {
-                        if (openExternally(u)) return true;   // hand off to the system browser
-                    }
-                    return false;
-                }
-                // tel:, mailto:, geo:, intent:, ... -> let another app handle it
-                return openExternally(u);
-            }
-            @Override public void onPageStarted(WebView v, String url, android.graphics.Bitmap favicon) {
-                setStatus(S_LOADING);
-            }
-            @Override public void onPageFinished(WebView v, String url) {
-                cm.flush();
-                progress.setVisibility(View.INVISIBLE);
-                if (!failed) {
-                    setStatus(S_OK);
-                    // Reached the server: the pairing attempt is done, keep this address only.
-                    candidates.clear();
-                    candidateIndex = -1;
-                    rememberWorkingUrl(url);
-                }
-            }
-            @Override public void onReceivedError(WebView v, WebResourceRequest r, WebResourceError e) {
-                if (r.isForMainFrame()) {
-                    if (tryNextCandidate(v)) return;
-                    failed = true;
-                    setStatus(S_ERROR);
-                    v.loadDataWithBaseURL(null, errorHtml(String.valueOf(e.getDescription())),
-                            "text/html", "utf-8", null);
-                }
-            }
-            @Override public void onReceivedSslError(WebView v, SslErrorHandler h, SslError e) {
-                h.cancel();
-                if (tryNextCandidate(v)) return;
-                failed = true;
-                setStatus(S_ERROR);
-                v.loadDataWithBaseURL(null, errorHtml(sslErrorMessage(e.getPrimaryError())),
-                        "text/html", "utf-8", null);
-            }
-        });
-        web.setWebChromeClient(new WebChromeClient() {
-            @Override public void onProgressChanged(WebView v, int p) {
-                progress.setVisibility(p < 100 ? View.VISIBLE : View.INVISIBLE);
-                progress.setProgress(p);
-            }
-            @Override public void onPermissionRequest(PermissionRequest r) { r.grant(r.getResources()); }
-            @Override public boolean onShowFileChooser(WebView w, ValueCallback<Uri[]> cb, FileChooserParams p) {
-                if (fileCallback != null) fileCallback.onReceiveValue(null);
-                fileCallback = cb;
-                try { startActivityForResult(p.createIntent(), REQ_FILE); } catch (Exception e) { fileCallback = null; return false; }
-                return true;
-            }
-        });
-        web.setDownloadListener((u, ua, cd, mime, len) -> openExternally(Uri.parse(u)));
-
-        main.addView(web, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-        root.addView(main, new FrameLayout.LayoutParams(-1, -1));
-    }
-
-    private ImageButton iconButton(int drawableRes, int contentDescRes) {
-        ImageButton b = new ImageButton(this);
-        b.setImageResource(drawableRes);
-        b.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        b.setPadding(dp(9), dp(9), dp(9), dp(9));
-        b.setContentDescription(getString(contentDescRes));
-        TypedValue tv = new TypedValue();
-        if (getTheme().resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, tv, true)) {
-            b.setBackgroundResource(tv.resourceId);
+        if (tab != TAB_SESSIONS) {
+            selectTab(TAB_SESSIONS, false);
         } else {
-            b.setBackgroundColor(Color.TRANSPARENT);
-        }
-        return b;
-    }
-
-    private void updateHost(String url) {
-        if (hostLabel == null) return;
-        String authority = Uri.parse(url).getAuthority();
-        hostLabel.setText(authority == null || authority.isEmpty() ? url : authority);
-    }
-
-    private void setStatus(int color) {
-        if (dot == null) return;
-        android.graphics.drawable.Drawable d = dot.getBackground();
-        if (d instanceof GradientDrawable) ((GradientDrawable) d).setColor(color);
-    }
-
-    /** Hands a non-web URL to another app. Returns false when nothing can handle it. */
-    private boolean openExternally(Uri u) {
-        try {
-            Intent i;
-            if ("intent".equalsIgnoreCase(u.getScheme())) {
-                i = Intent.parseUri(u.toString(), Intent.URI_INTENT_SCHEME);
-            } else {
-                i = new Intent(Intent.ACTION_VIEW, u);
-            }
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(i);
-            return true;
-        } catch (Exception ignored) {
-            return false;
+            finish();
         }
     }
 
-    private void reload() {
-        String base = prefs.getString(KEY_URL, "");
-        if (base.isEmpty()) { showSettings(); return; }
-        setStatus(S_LOADING);
-        if (failed || web.getUrl() == null || web.getUrl().startsWith("data:") || "about:blank".equals(web.getUrl())) {
-            failed = false; loadedUrl = base; web.loadUrl(base);
-        } else web.reload();
+    @Override
+    public void onBackPressed() {
+        handleBack();
     }
 
-    private String errorHtml(String msg) {
-        String url = prefs.getString(KEY_URL, "");
-        return "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
-            + "<style>body{margin:0;padding:56px 24px;background:#0B0B0F;color:#E5E7EB;"
-            + "font-family:-apple-system,Roboto,system-ui,sans-serif;text-align:center;"
-            + "-webkit-text-size-adjust:100%}"
-            + "h2{margin:0 0 10px;font-size:20px;font-weight:650;letter-spacing:-.01em}"
-            + "p{margin:0;font-size:14px;line-height:1.5;color:#9CA3AF}"
-            + ".addr{margin:18px auto 0;display:inline-block;font-family:ui-monospace,monospace;"
-            + "font-size:12.5px;color:#C7C7D1;background:#13131A;border:1px solid #2A2A36;"
-            + "border-radius:8px;padding:7px 12px;word-break:break-all}"
-            + ".why{margin-top:16px;font-size:12.5px;color:#6B7280}"
-            + ".act{display:block;max-width:280px;margin:26px auto 0;padding:15px;border-radius:12px;"
-            + "font-size:15px;font-weight:600;text-decoration:none}"
-            + ".primary{background:#4F46E5;color:#fff}"
-            + ".secondary{margin-top:10px;background:#17171F;border:1px solid #2A2A36;color:#E5E7EB;"
-            + "font-weight:500}"
-            + "</style></head><body>"
-            + "<h2>Can't reach OpenCode Pair</h2>"
-            + "<p>The server did not respond.</p>"
-            + "<div class='addr'>" + escape(url) + "</div>"
-            + "<p class='why'>" + escape(msg) + "</p>"
-            + "<p class='why'>Check that OpenCode Pair is running on your PC and that both devices are on the same network.</p>"
-            + "<a class='act primary' href='app://retry'>Try again</a>"
-            + "<a class='act secondary' href='app://edit'>Change address</a>"
-            + "</body></html>";
-    }
-
-    private static String escape(String s) { return TextUtils.htmlEncode(s == null ? "" : s); }
-
-    private static String sslErrorMessage(int primaryError) {
-        switch (primaryError) {
-            case SslError.SSL_NOTYETVALID:   return "The server certificate is not valid yet.";
-            case SslError.SSL_EXPIRED:       return "The server certificate has expired.";
-            case SslError.SSL_IDMISMATCH:    return "The server certificate does not match the address.";
-            case SslError.SSL_UNTRUSTED:     return "The server certificate is not trusted.";
-            case SslError.SSL_DATE_INVALID:  return "The server certificate date is invalid.";
-            case SslError.SSL_INVALID:       return "The server certificate is invalid.";
-            default:                         return "The server certificate could not be verified.";
+    private void applyInsets(View v) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            getWindow().setDecorFitsSystemWindows(false);
+            v.setOnApplyWindowInsetsListener((view, insets) -> {
+                Insets bars = insets.getInsets(
+                        WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                Insets ime = insets.getInsets(WindowInsets.Type.ime());
+                view.setPadding(bars.left, bars.top, bars.right, Math.max(bars.bottom, ime.bottom));
+                return insets;
+            });
+        } else {
+            v.setFitsSystemWindows(true);
         }
     }
 
-    @Override protected void onActivityResult(int req, int res, Intent data) {
-        if (req == REQ_SCAN) {
-            if (res == RESULT_OK && data != null) {
-                handlePairingPayload(data.getStringExtra(ScanActivity.EXTRA_TEXT));
-            }
-            return;
-        }
-        if (req == REQ_FILE && fileCallback != null) {
-            fileCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(res, data));
-            fileCallback = null;
-        } else super.onActivityResult(req, res, data);
-    }
-
-    @Override protected void onSaveInstanceState(Bundle o) { super.onSaveInstanceState(o); if (web != null) web.saveState(o); }
-    @Override protected void onResume() { super.onResume(); if (web != null) web.onResume(); }
-    @Override protected void onPause() { if (web != null) { web.onPause(); CookieManager.getInstance().flush(); } super.onPause(); }
-
-    @Override protected void onDestroy() {
-        if (backCallback != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
-            backCallback = null;
-        }
-        if (web != null) {
-            if (main != null) main.removeView(web);
-            web.destroy();
-            web = null;
-        }
+    @Override
+    protected void onDestroy() {
+        if (progress != null && progress.isShowing()) progress.dismiss();
         super.onDestroy();
     }
 }

@@ -72,12 +72,34 @@ public final class PairPayload {
         return url != null && url.toLowerCase(Locale.US).contains(CONNECT_PATH);
     }
 
+    /**
+     * Rebuilds a pairing link for another server address while keeping the one-time code. This is
+     * how a QR code that carries the loopback link (opencode pair puts the local address first)
+     * can still be redeemed over the LAN or a tunnel. Returns null for non-pairing input.
+     */
+    public static String withBase(String pairingUrl, String base) {
+        if (pairingUrl == null || base == null) return null;
+        int at = pairingUrl.indexOf(CONNECT_PATH);
+        if (at < 0) return null;
+        String b = trimTrailing(base.trim());
+        while (b.endsWith("/")) b = b.substring(0, b.length() - 1);
+        String lower = b.toLowerCase(Locale.US);
+        if (!lower.startsWith("http://") && !lower.startsWith("https://")) return null;
+        if (hostOf(b).isEmpty()) return null;
+        return b + pairingUrl.substring(at);
+    }
+
     /** Host part of an absolute URL, or "" when it cannot be read. */
     static String hostOf(String url) {
         if (url == null) return "";
         int at = url.indexOf("://");
         if (at < 0) return "";
         String rest = url.substring(at + 3);
+        if (rest.startsWith("[")) {
+            int close = rest.indexOf(']');
+            if (close > 0) return rest.substring(1, close).toLowerCase(Locale.US);
+            return "";
+        }
         int end = rest.length();
         for (char c : new char[] {'/', '?', '#', ':'}) {
             int i = rest.indexOf(c);

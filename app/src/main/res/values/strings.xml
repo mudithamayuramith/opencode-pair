@@ -1,19 +1,151 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">OpenCode Pair</string>
-    <string name="connect_title">OpenCode Pair</string>
-    <string name="connect_subtitle">Connect this phone to the OpenCode session on your computer.</string>
-    <string name="connect_hint">http://192.168.1.10:4096</string>
-    <string name="connect_invalid">Please enter a valid http:// or https:// address.</string>
-    <string name="connect_loopback">127.0.0.1 only works on the computer itself. Use the 192.168.x.x link instead, or scan the QR code.</string>
-    <string name="connect_action">Connect</string>
-    <string name="connect_scan">Scan QR code</string>
-    <string name="label_server_address">Server address or pairing link</string>
-    <string name="hint_server">Run “opencode pair” on your PC, then scan its QR code or paste one of the three links it prints (192.168.x.x or the https address — not 127.0.0.1). Links work once and expire in 5 minutes.</string>
-    <string name="footnote_saved">The address is saved and reopened automatically next time.</string>
-    <string name="cd_reload">Reload page</string>
-    <string name="cd_settings">Change server address</string>
 
+    <!-- Tabs -->
+    <string name="tab_sessions">Sessions</string>
+    <string name="tab_connections">Connections</string>
+    <string name="tab_settings">Settings</string>
+
+    <!-- Common -->
+    <string name="common_back">Back</string>
+    <string name="common_more">More</string>
+    <string name="common_cancel">Cancel</string>
+    <string name="common_save">Save</string>
+    <string name="common_delete">Delete</string>
+    <string name="common_remove">Remove</string>
+    <string name="common_retry">Retry</string>
+    <string name="common_open">Open</string>
+    <string name="common_close">Close</string>
+    <string name="common_loading">Loading…</string>
+    <string name="common_connected">Connected</string>
+    <string name="common_error">Something went wrong</string>
+    <string name="common_copied">Copied</string>
+
+    <!-- Sessions -->
+    <string name="sessions_title">Sessions</string>
+    <string name="sessions_new">New session</string>
+    <string name="sessions_empty_title">No sessions yet</string>
+    <string name="sessions_empty_body">Start a session to give your computer something to do.</string>
+    <string name="sessions_no_connection_title">Connect your computer</string>
+    <string name="sessions_no_connection_body">Pair with the OpenCode server running on your computer to see its sessions here.</string>
+    <string name="sessions_error_title">Could not load sessions</string>
+    <string name="sessions_delete">Delete session</string>
+    <string name="sessions_delete_confirm">Delete “%1$s”? This cannot be undone.</string>
+    <string name="sessions_created">Session created</string>
+    <string name="sessions_create_failed">Could not create the session</string>
+    <string name="sessions_delete_failed">Could not delete the session</string>
+    <string name="sessions_pick_project">Choose a folder</string>
+    <string name="sessions_default_folder">Default folder</string>
+    <string name="sessions_default_body">Create the session in the server’s default folder?</string>
+    <string name="sessions_creating">Creating session…</string>
+    <string name="sessions_subagent">Subagent</string>
+
+    <!-- Connections -->
+    <string name="connections_title">Connections</string>
+    <string name="connections_add">Add connection</string>
+    <string name="connections_empty_title">No connections</string>
+    <string name="connections_empty_body">Scan the QR code from opencode pair to connect in seconds.</string>
+    <string name="connections_active">Active</string>
+    <string name="connections_tap_to_use">Tap to use</string>
+    <string name="connections_rename">Rename</string>
+    <string name="connections_delete">Remove connection</string>
+    <string name="connections_delete_confirm">Remove “%1$s”? The server keeps running; only this saved connection is removed.</string>
+    <string name="connections_how_title">How pairing works</string>
+    <string name="connections_how_body">Run opencode pair on your computer and scan the QR code. The app redeems the link for a token and talks to the API directly. Pairing links are single-use.</string>
+    <string name="connections_name_hint">Computer name</string>
+    <string name="connections_remove_failed">Could not remove the connection</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_connection">Connection</string>
+    <string name="settings_no_connection">No connection</string>
+    <string name="settings_pair">Pair a computer</string>
+    <string name="settings_pair_new">Pair another computer</string>
+    <string name="settings_web">Open full web UI</string>
+    <string name="settings_web_desc">Use the official OpenCode web interface</string>
+    <string name="settings_remove">Remove this connection</string>
+    <string name="settings_appearance">Appearance</string>
+    <string name="settings_system">System</string>
+    <string name="settings_light">Light</string>
+    <string name="settings_dark">Dark</string>
+    <string name="settings_about">About</string>
+    <string name="settings_version">Version %1$s</string>
+    <string name="settings_about_body">A native, dependency-light client for your self-hosted OpenCode server.</string>
+    <string name="settings_disclaimer">Not affiliated with OpenCode. Your sessions stay on your computer.</string>
+
+    <!-- Add connection -->
+    <string name="add_title">Add connection</string>
+    <string name="add_heading">Connect to your computer</string>
+    <string name="add_subtitle">Scan the QR code from opencode pair, or enter the server address manually.</string>
+    <string name="add_scan">Scan QR code</string>
+    <string name="add_or">or connect manually</string>
+    <string name="add_address_label">Server address</string>
+    <string name="add_address_hint">http://192.168.1.10:4096</string>
+    <string name="add_password_label">Password (if required)</string>
+    <string name="add_password_hint">Only if the server has one</string>
+    <string name="add_name_label">Name (optional)</string>
+    <string name="add_name_hint">My computer</string>
+    <string name="add_connect">Connect</string>
+    <string name="add_hint">Use the LAN address from opencode pair, or paste a full pairing link into the address field. The app talks to the OpenCode API directly and keeps the token on this device.</string>
+    <string name="add_setup_title">On your computer</string>
+    <string name="add_setup_body">Run opencode pair, then scan the QR code. If the code points at 127.0.0.1, paste the LAN or tunnel link printed underneath it. Pairing links are single-use and expire quickly.</string>
+    <string name="add_connecting">Connecting…</string>
+    <string name="add_pairing">Pairing with your computer…</string>
+    <string name="add_error_address">Enter a valid http:// or https:// server address.</string>
+    <string name="add_error_password">Check the address and password. The server rejected the connection.</string>
+    <string name="add_error_loopback">That address points at this phone. Use the LAN or tunnel address printed by opencode pair.</string>
+    <string name="add_loopback_title">Use the computer\'s address</string>
+    <string name="add_loopback_body">The QR code points at 127.0.0.1, which only works on the computer itself. Paste the LAN or tunnel pairing link printed by opencode pair, or enter the computer\'s address (for example 192.168.1.10:28894). The scanned one-time code is kept.</string>
+    <string name="add_loopback_hint">LAN or tunnel link / address</string>
+    <string name="add_error_expired">This pairing link was already used or has expired. Run opencode pair again.</string>
+    <string name="add_error_no_pairing">That code did not contain an OpenCode pairing link.</string>
+    <string name="add_error_network">Could not reach the server. Check that the phone and computer are on the same network.</string>
+    <string name="add_connected">Connected</string>
+
+    <!-- Chat -->
+    <string name="chat_hint">Ask anything…</string>
+    <string name="chat_send">Send</string>
+    <string name="chat_stop">Stop</string>
+    <string name="chat_thinking">Thinking</string>
+    <string name="chat_thinking_collapse">Thinking — tap to collapse</string>
+    <string name="chat_tool_input">Input</string>
+    <string name="chat_tool_output">Output</string>
+    <string name="chat_working">Working…</string>
+    <string name="chat_retrying">Retrying</string>
+    <string name="chat_retry_attempt">Attempt %1$d: %2$s</string>
+    <string name="chat_offline">Offline — retrying…</string>
+    <string name="chat_load_older">Load older messages</string>
+    <string name="chat_empty_title">Start the conversation</string>
+    <string name="chat_empty_body">Send a message below. The agent runs on your computer.</string>
+    <string name="chat_permission_title">Permission required</string>
+    <string name="chat_permission_allow">Allow once</string>
+    <string name="chat_permission_always">Always</string>
+    <string name="chat_permission_reject">Reject</string>
+    <string name="chat_permission_counts">%1$d of %2$d</string>
+    <string name="chat_open_web">Open full web UI</string>
+    <string name="chat_reload">Reload session</string>
+    <string name="chat_model">Change model</string>
+    <string name="chat_models_loading">Models are still loading…</string>
+    <string name="chat_model_changed">Model changed</string>
+    <string name="chat_model_failed">Could not change the model</string>
+    <string name="chat_interrupted">Stopping…</string>
+    <string name="chat_interrupt_failed">Could not stop the agent</string>
+    <string name="chat_send_failed">Could not send the message</string>
+    <string name="chat_expired">Session expired</string>
+    <string name="chat_expired_body">Pair with your computer again to keep using this session.</string>
+    <string name="chat_pair_again">Pair again</string>
+    <string name="chat_session_missing">Session not found</string>
+    <string name="chat_loading">Loading session…</string>
+    <string name="chat_empty_short">No messages yet</string>
+
+    <!-- Web UI fallback -->
+    <string name="web_title">Web UI</string>
+    <string name="web_reload">Reload</string>
+    <string name="web_error">Could not load the web UI</string>
+    <string name="web_retry">Try again</string>
+
+    <!-- Scanner -->
     <string name="scan_hint">Point the camera at the QR code in your terminal</string>
     <string name="scan_close">Close scanner</string>
     <string name="scan_permission">Camera access is needed to scan the QR code. Enable it in Android Settings, then come back here.</string>
@@ -21,4 +153,16 @@
     <string name="scan_no_camera">This device has no camera. Paste the pairing link instead.</string>
     <string name="scan_camera_busy">The camera is unavailable right now. Close other camera apps and try again.</string>
     <string name="scan_not_pairing">That QR code is not an OpenCode pairing code.</string>
+
+    <!-- Content descriptions -->
+    <string name="cd_back">Back</string>
+    <string name="cd_more">More</string>
+    <string name="cd_refresh">Refresh</string>
+    <string name="cd_add">New session</string>
+    <string name="cd_send">Send message</string>
+    <string name="cd_stop">Stop</string>
+    <string name="cd_scan">Scan QR code</string>
+    <string name="cd_open_web">Open web UI</string>
+    <string name="cd_connection">Connection</string>
+    <string name="cd_close">Close</string>
 </resources>
